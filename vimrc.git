@@ -1,0 +1,11 @@
+" You may find fugitive (apt install vim-fugitive) useful.
+
+" fugitive defines Git, so I define Gitt for my own use
+" Use:
+"   :Gitt show <rev>
+"   :Gitt diff %
+com -nargs=* Gitt terminal git --no-pager <args>
+
+" Make ^Wf work from git-style patches
+set includeexpr=substitute(v:fname,'^[ab]/','','')
+

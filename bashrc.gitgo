@@ -1,0 +1,577 @@
+# Usage: ln -s /path/ho/here/bashrc.gitgo ~/.bashrc.gitgo
+#
+# Workflow:
+# gowork BUG-123
+#     vim; commit -a -m "BUG-123: fix"
+# golog or goshow
+#   - gopr for pull request
+#   or
+#   - gorbt for reviewboard
+# gopull
+# if pull-req; then gopr
+# gopush
+# goclose
+
+# We use \+ which is not a POSIX feature, so MAC users should use gsed
+SED=sed
+which gsed >/dev/null 2>&1 && SED=gsed
+
+is_help()
+{
+    [ "$1" = "-h" -o "$1" = "--help" ] && return 0
+    return 1
+}
+
+do_help()
+{
+    echo "  $*"
+}
+
+do_verbose()
+{
+    ( set -x; "$@" )
+}
+
+# Print branch name for a particular revision (HEAD by default) 
+git_branchname()
+{
+    # newer git understands git symbolic-ref --short HEAD
+    git rev-parse --abbrev-ref --symbolic-full-name ${1:-HEAD}
+}
+
+# Print summary for a particular revision
+git_summary()
+{
+    # --no-patch is not available on RHEL7 (on git revision less than 2.0)
+    git show --quiet --format='%s' ${1:-HEAD}
+}
+
+# Print the range of this branch patches from the tracking one
+# Used in golog, goshow
+gitgo_range()
+{
+    git_branchname @{u} | tr -d "\n" && echo ..${1:-HEAD}
+}
+
+git_gowork()
+{
+    is_help $* && {
+        do_help ""
+        do_help "$ git gowork BUG-123"
+        do_help ""
+        do_help "create a branch BUG-123 tracking the current branch."
+        return
+    }
+
+    git checkout -b $1 --track $(git_branchname)
+}
+
+git_gopull()
+{
+    local branch=$(git_branchname @{u})
+    local param="origin $branch:$branch"
+
+    is_help $* && {
+        do_help ""
+        do_help "Fetch the tracking branch and rebase on top of it."
+        return
+    }
+
+    if [ -z "$(git fetch --dry-run $param 2>&1)" ]; then
+        echo "Up to date"
+        return
+    fi
+    git fetch $param
+    git rebase -i
+}
+
+git_goshow()
+{
+    is_help $* && {
+        do_help ""
+        do_help "Usage: goshow"
+        do_help ""
+        do_help "git show for the range of commits from the tracking branch"
+        return
+    }
+
+    git show $(gitgo_range) $@
+}
+
+git_golog()
+{
+    is_help $* && {
+        do_help ""
+        do_help "Usage: git golog"
+        do_help ""
+        do_help "git log for the range of commits from the tracking branch"
+        return
+    }
+
+    echo -n "Tracking "
+    tput bold; git_branchname @{u}; tput sgr0
+    git log $(gitgo_range) $@
+}
+
+git_gopush()
+{
+    local action=do_verbose
+    local push_to="$(git_branchname @{u})"
+
+    is_help $* && {
+        do_help ""
+        do_help "git gopush [-d] [-t <target branch>] <rev>"
+        do_help ""
+        do_help "Pushes the current branch (up to to <rev>) to the"
+        do_help "origin's tracking branch"
+        do_help ""
+        do_help "  -d|--dry     : print the command"
+        do_help "  -t|--to      : destination branch"
+        do_help ""
+        do_help "This branch has '${push_to}' as tracking"
+        return
+    }
+
+    while [ -n "$1" ]; do
+        case "$1" in
+            -d|--dry)
+                action=echo
+                ;;
+            -t|--to)
+                push_to=$2
+                shift
+                ;;
+            *)
+                break;
+                ;;
+        esac
+
+        shift
+    done
+
+    local cmd="git push origin ${1:-HEAD}:${push_to}"
+    $action $cmd
+}
+
+git_goclose()
+{
+    local branch=$(git_branchname)
+    local tracking=$(git_branchname @{u})
+
+    is_help $* && {
+        do_help ""
+        do_help "Usage: git goclose"
+        do_help ""
+        do_help "Deletes the current branch and switches to the tracking one"
+        do_help ""
+        do_help "Will delete $branch and switch to $tracking"
+        return
+    }
+
+    git checkout $tracking
+    git pull
+    if git branch -d $branch; then
+        true
+    else
+        tput bold
+        echo "Failed to delete $branch"
+        tput sgr0
+        git checkout $branch
+    fi
+}
+
+git_godiscard()
+{
+    local branch=$(git_branchname)
+    local tracking=$(git_branchname @{u})
+
+    is_help $* && {
+        do_help ""
+        do_help "Usage: git godiscard"
+        do_help ""
+        do_help "Drops all local changes (tracked), deletes the current branch"
+        do_help "and switches to the tracking one."
+        do_help "Be aware that whole branch will be lost!"
+        do_help ""
+        do_help "Will delete $branch and switch to $tracking"
+        return
+    }
+
+    read -p "Discard $branch along with local changes? (y/n): " yn
+    if [ "$yn" = "y" -o "$yn" = "Y" ] ; then
+        git checkout $tracking --force
+        git pull
+        if git branch -D $branch; then
+            true
+        else
+            tput bold
+            echo "Failed to delete $branch"
+            tput sgr0
+            git checkout $branch
+        fi
+    fi
+}
+
+git_gopublish()
+{
+    local branch=$(git_branchname)
+    local my_user="$(id -un)"
+    local origin_prefix="user/${my_user}"
+    local action=do_verbose
+    local publish=
+    local origin_name=
+
+    # If you cloned the branch by full name (say in another checkout) we
+    # don't want to have duplicate prefixes when you publish again.
+    if echo $branch | grep -q -E "^$origin_prefix" ; then
+      origin_name="${branch}"
+    else
+      origin_name="user/${my_user}/${branch}"
+    fi
+
+    is_help $* && {
+        do_help ""
+        do_help "Usage: git publish [-d] [--initial] [git push parameters]"
+        do_help ""
+        do_help "Publishes your branch to origin as your personal branch."
+        do_help "Note that it will break gopush/goclose cause it updates"
+        do_help "the tracking branch."
+        do_help ""
+        do_help "  -d|--dry     : print the command"
+        do_help "  -i|--initial : initial upstream (passed -u)"
+        do_help ""
+        do_help "Will push $branch as $origin_name"
+        do_help ""
+        do_help "Further pushes should be done with: git gopublish"
+        do_help ""
+        do_help "After this 'git gorbt' will require explicit revisions:"
+        do_help ""
+        do_help "  $ git gorbt : will publish nothing or diff between"
+        do_help "                local and origin versions of your branch"
+        do_help "  $ git gorbt master..HEAD : will do the right thing"
+        do_help "                             (if you branched from master)"
+        do_help ""
+        do_help "Gopush will require explicit branch argument (-t)."
+        do_help ""
+        return
+    }
+
+    while [ -n "$1" ]; do
+        case "$1" in
+            -d|--dry)
+                action=echo
+                ;;
+            -i|--initial)
+                publish="-u"
+                ;;
+            *)
+                break;
+                ;;
+        esac
+
+        shift
+    done
+
+    local cmd="git push ${publish} $* origin ${branch}:${origin_name}"
+
+    $action $cmd
+}
+
+##############################################################
+################ Reviewboard helpers #########################
+##############################################################
+
+# Make comma-separated list of bugs out of git summary.
+# Internal function without an entry in gitconfig.go.
+# usage: gitgo_summary2bugs $(git summary $rev)
+gitgo_summary2bugs()
+{
+    if echo "$1" | grep -q -E "^[A-Za-z0-9_-]+[A-Za-z_-]:.*" ; then
+        echo
+    elif echo "$1" | grep -q -E "^[A-Za-z]+-[0-9]+:.*" ; then
+        # Jira issues are words - let's get all the words out
+        local bugs=$(echo $1 | tr ' ' '\n' | \
+                         grep -E '^[A-Z]+-[0-9]+:' |$SED -e 's/://')
+        local nonfirst
+        for bug in $bugs; do
+            if [ -n "$nonfirst" ]; then
+                printf ', '
+            fi
+            nonfirst=yes
+            printf "$bug "
+        done
+        echo
+    elif echo "$1" | grep -q -E "^([Bb]ug|[Tt]ask) *([0-9]+):"; then
+        # In theory it may be a lot of bugs, but let's get the first one
+        echo $1 | $SED 's/^\([Bb]ug\|[Tt]ask\) *\([0-9]\+\):.*$/\2/'
+    else
+        # No bug information
+        echo
+    fi
+}
+
+rbt_defaults_init=false
+
+# Internal functions useful to init/restore defaults when debugging a
+# single-function with sourced bashrc.gitgo
+git_gorbt_defaults()
+{
+    rbt_defaults_init=true
+    rbt_action=
+    rbt_publish=false
+    rbt_reviewers=
+    rbt_first_post=true
+}
+
+# Enforce defaults reinit on the next git_gorbt call
+git_gorbt_reset()
+{
+    rbt_defaults=false
+}
+
+# gorbt_one <rev:HEAD> [branch prefix depends]
+# Post one commit to Review Board
+git_gorbt_one()
+{
+    $rbt_defaults_init || git_gorbt_defaults
+
+    local rev="${1:-HEAD}"
+    local summary="$(git_summary "$rev")"
+    local branch=${2:-$(git_branchname "@{u}")}
+    local bugs="$(gitgo_summary2bugs "$summary")"
+    local num_string="$(echo $3 | $SED 's/^# *//; s/:/: /')"
+    local dep_id=${3:+$4}
+    local extra_opts=
+    local publish=
+    local full_summary=
+    local yn=y
+
+    $rbt_publish && publish="-p"
+
+    if $rbt_first_post ; then
+        extra_opts="$rbt_branch --tracking-branch=$branch ${bugs:+--bugs-closed=}$bugs"
+    else
+        extra_opts="--update --guess-description yes"
+    fi
+
+    # Note, dep_id is empty (undefined) if 'rbt post' is not executed
+    # (in other words if $rbt_action is non-empty)
+    extra_opts="${extra_opts} ${dep_id:+--depends-on=}${dep_id}"
+
+    if [ -n "$rbt_action" ] ; then
+        full_summary="\"${num_string}${summary}\""
+    else
+        full_summary="${num_string}${summary}"
+        $rbt_first_post || read -p "Update $summary? patch (y/n): " yn
+    fi
+
+    if [ "$yn" = "y" -o "$yn" = "Y" ] ; then
+        $rbt_action rbt post $publish $rbt_reviewers \
+                    --summary="${full_summary}" \
+                    $extra_opts $rev
+    fi
+}
+
+git_gorbt()
+{
+    $rbt_defaults_init || git_gorbt_defaults
+
+    local rbt_numbers=true
+
+    is_help $* && {
+        do_help ""
+        do_help "Usage: git gorbt [-d] [-n] [range]"
+        do_help ""
+        do_help "Publishes series of review requests, from the "
+        do_help "tracking branch to the HEAD (if no range) or for a"
+        do_help "range of revisions - see 'man 7 gitrevisions' for details"
+        do_help ""
+        do_help "  -d|--dry          : print rbt commands, but don't execute them"
+        do_help "  -n|--no-numbers   : don't number the patches"
+        do_help "  -p|--publish      : publish things"
+        do_help "  -U|--users        : users to review (--target-people)"
+        do_help "  -G|--groups       : group to review (--target-groups)"
+        do_help "  -b|--branch       : branch to which patches will be commited"
+        do_help "  -u|--update       : update patches; does not check if they were modified!"
+        do_help ""
+        do_help "Note that if you use -d then --depends is not filled in automatically!"
+        do_help " Use for debug/overview only."
+        do_help ""
+        do_help "Example of workflow - see README.md for details:"
+        do_help "  git gowork mybranch"
+        do_help "  git commit -a -m 'BUG-239: good commit message'"
+        do_help "  git gorbt"
+        return
+    }
+    while [ -n "$1" ]; do
+        case "$1" in
+            -d|--dry)
+                rbt_action=echo
+                ;;
+            -n|--no-numbers)
+                rbt_numbers=false
+                ;;
+            -p|--publish)
+                rbt_publish=true
+                ;;
+            -U|--users|--target-people)
+                rbt_reviewers="$rbt_reviewers --target-people $2"
+                shift
+                ;;
+            -G|--groups|--target-groups)
+                rbt_reviewers="$rbt_reviewers --target-groups $2"
+                shift
+                ;;
+            -b|--branch)
+                rbt_branch="--branch $2"
+                shift
+                ;;
+            -u|--update)
+                rbt_first_post=false
+                ;;
+            *)
+                break;
+                ;;
+        esac
+
+        shift
+    done
+    # RBT is not happy with reviewers options passed to -u
+    $rbt_first_post || rbt_reviewers=''
+
+    local revs="$(git log --reverse --format='%h' ${1:-$(gitgo_range)})"
+    local tracking_branch=$(git_branchname @{u})
+    local i=0
+    # We remove spaces because of MacOS behaviuor that adds a whitespace in front
+    local n=$(echo $revs | wc -w | tr -d ' ')
+    local depends=
+
+    # means we're not numbering; see git_gorbt_one for handling
+    local num_string="#"
+
+    [ -z "$rbt_branch" ] && rbt_branch="--branch $tracking_branch"
+
+    if [ $n -eq 1 ]; then
+        git_gorbt_one $revs $tracking_branch;
+    else
+        for rev in $revs; do
+            i=$(($i+1))
+            $rbt_numbers && num_string="[$i/$n]:"
+            depends="$(git_gorbt_one $rev $tracking_branch $num_string $depends |tee /dev/tty | \
+                grep '^Review request' | \
+                $SED 's/^Review request #\([0-9]\+\) posted.$/\1/')"
+        done
+    fi
+}
+
+##############################################################
+################ Pull request helpers ########################
+##############################################################
+
+git_gopr()
+{
+    local branch=$(git_branchname)
+    local tracking=$(git_branchname @{u})
+    local this=HEAD
+    local use_fork=false
+    local remote_to_push=origin
+    local remote_to_pr=origin
+    local remote_branchname=$branch
+
+    is_help $* && {
+        do_help ""
+        do_help "Usage: git gopr [-F] <forked-remote>|<remote-branchname> [<rev>]"
+        do_help ""
+        do_help "Creates a pull request out of your current branch up to <rev> "
+        do_help "revision."
+        do_help ""
+        do_help "  -F|--fork : push to a personal fork"
+        do_help ""
+        do_help "Example with a \"my\" remote pointing to a fork:"
+        do_help "  git gopr -f my"
+        do_help "Example with a user branch in origin:"
+        do_help "  git gopr user/kostik/bug239"
+        # fixme: do we want to auto-detect all the bits in
+        # user/sasha/bug239 above?
+    }
+    while [ -n "$1" ]; do
+        case "$1" in
+            -F|--fork)
+                use_fork=true;
+                remote_to_push=$2
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+    [ $use_fork = false ] && remote_branchname=$1
+    shift
+    [ -n "$1" ] && this=$1
+
+    do_verbose git push --force $remote_to_push $this:$remote_branchname
+
+    # Print an URL to create a pull request
+    # Fixme: add an option to spawn browser?
+    local base_url=$(git remote get-url --push origin)
+    # Transform  git@github.com:foo/bar.git into https://github.com/foo/bar
+    base_url=$(echo $base_url |$SED 's?:?/?' |$SED 's?^git@?https://?'|$SED 's?\.git$??')
+    if [ $use_fork = true ]; then
+        # Find github name of the fork repo:
+        local fork_name=$(git remote get-url $remote_to_push |$SED 's?^.*:\(.*\)/.*$?\1?')
+        echo "If you want to create a pull request, use following URL:"
+        echo "${base_url}/compare/$tracking...${fork_name}:$branch?expand=1"
+    else
+        #fixme: write down the URL similar to the case above
+        true;
+    fi
+}
+
+##############################################################
+############### Synchronization helpers ######################
+##############################################################
+
+is_sync_ready()
+{
+    if [ -z "$OL_GIT_HELPERS_FORKNAME" ]; then
+        echo "Set up OL_GIT_HELPERS_FORKNAME variable to use gosync commands"
+        false
+    else
+        true
+    fi
+}
+
+#
+# Primitives to synchronize branches betweed 2 firewalled copies, usually
+# via a private github fork.  This github fork should be added to remotes
+# on the both side, under the name exported via $OL_GIT_HELPERS_FORKNAME
+# variable.
+#
+# For example:
+#   go to https://github.com/Xilinx-CNS/ol-git-helpers and click "Fork"
+#   export OL_GIT_HELPERS_FORKNAME=my
+#   git remote add  https://github.com/ol-alexandra/ol-git-helpers $OL_GIT_HELPERS_FORKNAME
+#
+# Branches should be created via git gowork in both copies (or via any
+# other way you like).
+# After that `gosyncfrom` copies your code from here to the FORKNAME,
+# and `gosyncto` copies your code from the FORKNAME.
+#
+git_gosyncfrom()
+{
+    is_sync_ready && git_gopr -F "$OL_GIT_HELPERS_FORKNAME"
+}
+
+git_gosyncto()
+{
+    is_sync_ready && \
+        git fetch "${OL_GIT_HELPERS_FORKNAME}" $(git branchname) && \
+        read -p "Overwrite the branch from $(git remote get-url ${OL_GIT_HELPERS_FORKNAME}) ?" yn
+    if [ "$yn" = "y" -o "$yn" = "Y" ] ; then
+        git reset --hard "${OL_GIT_HELPERS_FORKNAME}"/$(git branchname)
+    else
+        echo "Declined"
+    fi
+}
+

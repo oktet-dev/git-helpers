@@ -1,0 +1,11 @@
+# vim:ft=gitconfig
+#
+# Usage from ~/.gitconfig:
+# [include]
+#     path = /path/to/gitconfig.alias
+
+[alias]
+	up = checkout
+	refresh = commit -a --amend --no-edit
+	show-stat = show --stat
+	graft = cherry-pick -x

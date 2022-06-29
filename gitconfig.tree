@@ -1,0 +1,14 @@
+# vim:ft=gitconfig
+#
+# Usage from ~/.gitconfig:
+# [include]
+#     path = /path/to/gitconfig.tree
+#
+[alias]
+	tree = log --graph --date=short \
+		--format='%C(auto)%h%d %cd %C(blue)%an%C(auto) %s'
+
+        # The next will break unless you use bashrc.gitgo as well
+	gorange = "!. ~/.bashrc.gitgo; gitgo_range"
+	gotree = !git tree $(git gorange)
+

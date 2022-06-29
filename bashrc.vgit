@@ -1,0 +1,20 @@
+# Usage:
+# - source from your .bashrc
+# - `vgit show` opens the commit in vim
+#
+# vgit is "vim git".
+# It opens the git output in vim, naturally.
+# It is a bad idea to use it with a long log!
+#
+# For other vim-related hints, see vimrc.git nearby
+
+vgit()
+{
+    view -c "term ++curwin git --no-pager $*"
+}
+
+# vgit completion are the same as git's one.
+if [ -f /usr/share/bash-completion/completions/git ]; then
+    . /usr/share/bash-completion/completions/git
+    __git_complete vgit __git_main
+fi
