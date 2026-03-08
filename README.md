@@ -8,10 +8,21 @@ Installation
 git clone <repo>
 cd git-helpers
 ./install.sh
-
 ```
 
 and follow the instructions.
+
+### Python CLI (`gg`)
+
+Some commands (starting with `gorbt`) have been rewritten in Python.
+Install the `gg` tool with:
+
+```shell
+uv tool install -e /path/to/git-helpers
+```
+
+This places the `gg` binary in `~/.local/bin/`. The git aliases
+automatically add this to PATH.
 
 Generic rule
 ------------
@@ -20,26 +31,29 @@ All wrappers have help that can be invoked via `-h/--help`:
 
 ```
 [130] $ git gorbt -h
-'gorbt' is aliased to '!. ~/.bashrc.gitgo; git_gorbt'
+usage: gg rbt [-h] [-d] [-n] [-p] [-U USERS] [-G GROUPS] [-b BRANCH] [-u]
+              [-C N] [-D ID]
+              [range]
 
-  Usage: git gorbt [-d] [-n] [range]
+positional arguments:
+  range                 revision range (default: tracking..HEAD)
 
-  Publishes series of review requests, from the
-  tracking branch to the HEAD (if no range) or for a
-  range of revisions - see 'man 7 gitrevisions' for details
-
-    -d|--dry          : print rbt commands, but don't execute them
-    -n|--no-numbers   : don't number the patches
-    -p|--publish      : publish things
-    -U|--users        : users to review (--target-people)
-    -G|--groups       : group to review (--target-groups)
-    -b|--branch       : branch to which patches will be commited
-    -u|--update       : update patches; does not check if they were modified!
-
-  Example of workflow - see README.md for details:
-    git gowork mybranch
-    git commit -a -m 'BUG-239: good commit message'
-    git gorbt
+options:
+  -h, --help            show this help message and exit
+  -d, --dry             print rbt commands without executing
+  -n, --no-numbers      don't number the patches
+  -p, --publish         publish review requests
+  -U USERS, --users USERS
+                        reviewer (--target-people)
+  -G GROUPS, --groups GROUPS
+                        review group (--target-groups)
+  -b BRANCH, --branch BRANCH
+                        explicit branch for --branch arg
+  -u, --update          update existing review requests
+  -C N, --continue-from N
+                        continue numbering from patch N
+  -D ID, --depends-on ID
+                        first patch depends on review request ID
 ```
 
 Simple one-patch workflow
@@ -124,8 +138,8 @@ Check what will happen:
 
 ```
 $ git gorbt -p -d -U kostik
-rbt post -p --target-people kostik --branch master --summary="[1/2]: doc: add information about alias help" --tracking-branch=master 6ff614c
-rbt post -p --target-people kostik --branch master --summary="[2/2]: doc: add info about dry runs for rbt commands" --tracking-branch=master e601c8d
+rbt post -p --target-people kostik --summary=[1/2]: doc: add information about alias help --branch=master --tracking-branch=master --bugs-closed=... 6ff614c
+rbt post -p --target-people kostik --summary=[2/2]: doc: add info about dry runs for rbt commands --branch=master --tracking-branch=master --bugs-closed=... e601c8d
 ```
 
 And if you're fine:
@@ -218,6 +232,13 @@ git reset --keep HEAD~1
 
 # Return to branch and work
 git checkout bug239
+```
+
+Running tests
+-------------
+
+```shell
+uv run pytest tests/ -v
 ```
 
 Changes
