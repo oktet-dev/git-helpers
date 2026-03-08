@@ -38,4 +38,4 @@ All `go*` git subcommands follow the same pattern: a git alias in `gitconfig.go`
 - Every function supports `-h`/`--help` via `is_help()`.
 - Dry-run mode (`-d`/`--dry`) is available on commands that perform remote operations.
 - macOS compatibility: `gsed` is auto-detected and used instead of `sed` when available.
-- `OL_GIT_HELPERS_FORKNAME` env var configures sync commands.
+- `GG_GIT_HELPERS_FORKNAME` env var configures sync commands.
