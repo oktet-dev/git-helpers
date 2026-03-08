@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -95,6 +96,14 @@ class GitRepo:
 
     def create_branch(self, name: str, track: str = "master") -> None:
         self.git("checkout", "-b", name, "--track", track)
+
+    def run_gg(self, *args: str) -> subprocess.CompletedProcess[str]:
+        """Run the gg CLI tool in this repo's working directory."""
+        return _run(
+            [sys.executable, "-m", "gg", *args],
+            cwd=self.work_dir,
+            env=self._env,
+        )
 
 
 def _make_env(extra_path: str | None = None) -> dict[str, str]:
