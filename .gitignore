@@ -1,2 +1,4 @@
 *~
 .reviewboardrc
+.gg/
+__pycache__/
