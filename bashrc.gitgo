@@ -377,6 +377,8 @@ git_gorbt()
     $rbt_defaults_init || git_gorbt_defaults
 
     local rbt_numbers=true
+    local continue_from=0
+    local initial_depends=
 
     is_help $* && {
         do_help ""
@@ -393,6 +395,8 @@ git_gorbt()
         do_help "  -G|--groups       : group to review (--target-groups)"
         do_help "  -b|--branch       : branch to which patches will be commited"
         do_help "  -u|--update       : update patches; does not check if they were modified!"
+        do_help "  -C|--continue N   : continue numbering from patch N"
+        do_help "  -D|--depends-on ID: first patch depends on review request ID"
         do_help ""
         do_help "Note that if you use -d then --depends is not filled in automatically!"
         do_help " Use for debug/overview only."
@@ -401,6 +405,9 @@ git_gorbt()
         do_help "  git gowork mybranch"
         do_help "  git commit -a -m 'BUG-239: good commit message'"
         do_help "  git gorbt"
+        do_help ""
+        do_help "Continue an existing series of 35 patches ending at r/18290:"
+        do_help "  git gorbt -C 35 -D 18290 eea77073e..HEAD"
         return
     }
     while [ -n "$1" ]; do
@@ -429,6 +436,14 @@ git_gorbt()
             -u|--update)
                 rbt_first_post=false
                 ;;
+            -C|--continue)
+                continue_from=$2
+                shift
+                ;;
+            -D|--depends-on)
+                initial_depends=$2
+                shift
+                ;;
             *)
                 break;
                 ;;
@@ -441,17 +456,18 @@ git_gorbt()
 
     local revs="$(git log --reverse --format='%h' ${1:-$(gitgo_range)})"
     local tracking_branch=$(git_branchname @{u})
-    local i=0
+    local i=$continue_from
     # We remove spaces because of MacOS behaviuor that adds a whitespace in front
     local n=$(echo $revs | wc -w | tr -d ' ')
-    local depends=
+    n=$(($n + $continue_from))
+    local depends=$initial_depends
 
     # means we're not numbering; see git_gorbt_one for handling
     local num_string="#"
 
     [ -z "$rbt_branch" ] && rbt_branch="--branch $tracking_branch"
 
-    if [ $n -eq 1 ]; then
+    if [ $n -eq 1 ] && [ $continue_from -eq 0 ]; then
         git_gorbt_one $revs $tracking_branch;
     else
         for rev in $revs; do
