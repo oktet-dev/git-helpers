@@ -1,5 +1,7 @@
 """Tests for gg rbt -- ReviewBoard posting via the Python CLI."""
 
+import subprocess
+
 from tests.conftest import GitRepo, RbtMock
 
 
@@ -117,3 +119,130 @@ class TestGgRbt:
         c1 = rbt_mock.call(1)
         # rbt mock returns "Review request #1000 posted." for first call
         assert "--depends-on=1000" in c1
+
+
+class TestSmartUpdate:
+    """Tests for `gg rbt -u` smart update with diff hash cache."""
+
+    def test_first_post_creates_cache(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        git_repo.run_gg("rbt")
+        assert (git_repo.work_dir / ".gg" / "posted-diffs").exists()
+
+    def test_update_skips_unchanged(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        git_repo.commit("BUG-2: second")
+        git_repo.run_gg("rbt")
+        assert rbt_mock.call_count() == 2
+
+        r = git_repo.run_gg("rbt", "-u")
+        # No new rbt calls -- both patches unchanged
+        assert rbt_mock.call_count() == 2
+        assert "skip (unchanged): BUG-1: first" in r.stdout
+        assert "skip (unchanged): BUG-2: second" in r.stdout
+
+    def test_update_posts_changed(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        git_repo.commit("BUG-2: second")
+        git_repo.run_gg("rbt")
+        assert rbt_mock.call_count() == 2
+
+        # Amend the second commit to change its diff
+        (git_repo.work_dir / "extra_file").write_text("changed\n")
+        git_repo.git("add", "extra_file")
+        git_repo.git("commit", "--amend", "--no-edit")
+
+        r = git_repo.run_gg("rbt", "-u")
+        # Only the amended commit should be posted
+        assert rbt_mock.call_count() == 3
+        assert "skip (unchanged): BUG-1: first" in r.stdout
+
+    def test_mixed_skip_and_post(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        git_repo.commit("BUG-2: second")
+        git_repo.commit("BUG-3: third")
+        git_repo.run_gg("rbt")
+        assert rbt_mock.call_count() == 3
+
+        # Amend the second commit via rebase
+        revs = git_repo.git(
+            "log", "--reverse", "--format=%H", "master..HEAD"
+        ).stdout.strip().splitlines()
+        second_rev = revs[1]
+
+        # Use git replace trick: amend second commit
+        git_repo.git("checkout", second_rev)
+        (git_repo.work_dir / "changed").write_text("new content\n")
+        git_repo.git("add", "changed")
+        git_repo.git("commit", "--amend", "--no-edit")
+        new_second = git_repo.git("rev-parse", "HEAD").stdout.strip()
+        git_repo.git("checkout", "feature")
+        # Rebase onto amended second
+        subprocess.run(
+            ["git", "rebase", "--onto", new_second, second_rev, "feature"],
+            cwd=git_repo.work_dir,
+            env=git_repo._env,
+            capture_output=True,
+            text=True,
+        )
+
+        r = git_repo.run_gg("rbt", "-u")
+        # First and third unchanged, second changed
+        assert rbt_mock.call_count() == 4
+        assert "skip (unchanged): BUG-1: first" in r.stdout
+        assert "skip (unchanged): BUG-3: third" in r.stdout
+
+    def test_update_without_cache_posts_everything(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        """Without a prior cache, -u posts everything (no skip possible)."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        git_repo.commit("BUG-2: second")
+        r = git_repo.run_gg("rbt", "-u")
+        assert rbt_mock.call_count() == 2
+        assert "skip" not in r.stdout
+
+    def test_no_prompt_needed(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        """Update completes without stdin -- no interactive prompt."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        git_repo.run_gg("rbt")
+        r = git_repo.run_gg("rbt", "-u")
+        assert r.returncode == 0
+
+    def test_dry_run_does_not_write_cache(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        git_repo.commit("BUG-2: second")
+        git_repo.run_gg("rbt", "-d")
+        assert not (git_repo.work_dir / ".gg" / "posted-diffs").exists()
+
+    def test_single_commit_update_skips(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        """Single commit path also uses cache."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: only one")
+        git_repo.run_gg("rbt")
+        assert rbt_mock.call_count() == 1
+
+        r = git_repo.run_gg("rbt", "-u")
+        assert rbt_mock.call_count() == 1
+        assert "skip (unchanged): BUG-1: only one" in r.stdout

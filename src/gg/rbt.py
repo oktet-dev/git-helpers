@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from gg import git
+from gg import diff_cache, git
 from gg.rbt_post import post_one
 
 
@@ -31,6 +31,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p.set_defaults(func=run)
 
 
+def _is_unchanged(rev: str, cached: set[str], cwd: Path) -> tuple[bool, str]:
+    """Check if a commit's diff matches the cache. Returns (unchanged, hash)."""
+    h = diff_cache.diff_hash(rev, cwd=cwd)
+    return h in cached, h
+
+
 def run(args: argparse.Namespace) -> int:
     """Execute the rbt subcommand."""
     cwd = Path.cwd()
@@ -52,23 +58,45 @@ def run(args: argparse.Namespace) -> int:
     total = len(revs) + continue_from
     depends = args.depends_on
 
+    cached = diff_cache.load_hashes(cwd=cwd) if args.update else set()
+    new_hashes: set[str] = set()
+
     # Single commit without --continue: no numbering
     if len(revs) == 1 and continue_from == 0:
-        post_one(
-            revs[0], tracking,
-            first_post=first_post,
-            publish=args.publish,
-            dry_run=args.dry,
-            reviewers=reviewers,
-            groups=groups,
-            explicit_branch=args.branch,
-            depends_on=depends,
-            cwd=cwd,
-        )
+        rev = revs[0]
+        unchanged, h = _is_unchanged(rev, cached, cwd)
+        new_hashes.add(h)
+
+        if args.update and unchanged:
+            summary_text = git.summary(rev, cwd=cwd)
+            print(f"skip (unchanged): {summary_text}")
+        else:
+            post_one(
+                rev, tracking,
+                first_post=first_post,
+                publish=args.publish,
+                dry_run=args.dry,
+                reviewers=reviewers,
+                groups=groups,
+                explicit_branch=args.branch,
+                depends_on=depends,
+                cwd=cwd,
+            )
+
+        if not args.dry:
+            diff_cache.save_hashes(new_hashes, cwd=cwd)
         return 0
 
     # Multiple commits: loop with numbering and dependency chaining
     for idx, rev in enumerate(revs, start=continue_from + 1):
+        unchanged, h = _is_unchanged(rev, cached, cwd)
+        new_hashes.add(h)
+
+        if args.update and unchanged:
+            summary_text = git.summary(rev, cwd=cwd)
+            print(f"skip (unchanged): {summary_text}")
+            continue
+
         if args.no_numbers:
             num_string = ""
         else:
@@ -90,4 +118,6 @@ def run(args: argparse.Namespace) -> int:
         if result.review_id:
             depends = result.review_id
 
+    if not args.dry:
+        diff_cache.save_hashes(new_hashes, cwd=cwd)
     return 0
