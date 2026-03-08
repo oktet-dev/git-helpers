@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export OL_GIT_HELPERS=${PWD}
+export GG_GIT_HELPERS=${PWD}
 
 fail() {
     echo $* >&2
@@ -14,15 +14,15 @@ try () {
 
 echo "Install .bashrc.gitgo"
 try rm -f ~/.bashrc.gitgo
-try ln -s ${OL_GIT_HELPERS}/bashrc.gitgo ~/.bashrc.gitgo
+try ln -s ${GG_GIT_HELPERS}/bashrc.gitgo ~/.bashrc.gitgo
 
 echo ""
 echo "Install gg CLI tool"
 if command -v uv >/dev/null 2>&1; then
-    try uv tool install --reinstall -e "${OL_GIT_HELPERS}"
+    try uv tool install --reinstall -e "${GG_GIT_HELPERS}"
 else
     echo "WARNING: uv not found. Install uv first, then run:"
-    echo "  uv tool install --reinstall -e ${OL_GIT_HELPERS}"
+    echo "  uv tool install --reinstall -e ${GG_GIT_HELPERS}"
 fi
 
 echo -e "\n\n"
@@ -31,8 +31,8 @@ echo -e "!!!Add the below into your $HOME/.bashrc \n\n"
 cat <<EOF
 ################## GIT-HELPERS ################
 # vgit show
-export OL_GIT_HELPERS=$OL_GIT_HELPERS
-. \${OL_GIT_HELPERS}/bashrc.vgit
+export GG_GIT_HELPERS=$GG_GIT_HELPERS
+. \${GG_GIT_HELPERS}/bashrc.vgit
 EOF
 
 echo -e "\n\n"
@@ -47,9 +47,9 @@ cat <<EOF
 	conflictstyle = diff3
 
 [include]
-  path = ${OL_GIT_HELPERS}/gitconfig.go
-  path = ${OL_GIT_HELPERS}/gitconfig.tree
-  path = ${OL_GIT_HELPERS}/gitconfig.alias
+  path = ${GG_GIT_HELPERS}/gitconfig.go
+  path = ${GG_GIT_HELPERS}/gitconfig.tree
+  path = ${GG_GIT_HELPERS}/gitconfig.alias
 
 EOF
 

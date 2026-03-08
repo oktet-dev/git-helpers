@@ -554,8 +554,8 @@ git_gopr()
 
 is_sync_ready()
 {
-    if [ -z "$OL_GIT_HELPERS_FORKNAME" ]; then
-        echo "Set up OL_GIT_HELPERS_FORKNAME variable to use gosync commands"
+    if [ -z "$GG_GIT_HELPERS_FORKNAME" ]; then
+        echo "Set up GG_GIT_HELPERS_FORKNAME variable to use gosync commands"
         false
     else
         true
@@ -565,13 +565,13 @@ is_sync_ready()
 #
 # Primitives to synchronize branches betweed 2 firewalled copies, usually
 # via a private github fork.  This github fork should be added to remotes
-# on the both side, under the name exported via $OL_GIT_HELPERS_FORKNAME
+# on the both side, under the name exported via $GG_GIT_HELPERS_FORKNAME
 # variable.
 #
 # For example:
 #   go to https://github.com/Xilinx-CNS/ol-git-helpers and click "Fork"
-#   export OL_GIT_HELPERS_FORKNAME=my
-#   git remote add  https://github.com/ol-alexandra/ol-git-helpers $OL_GIT_HELPERS_FORKNAME
+#   export GG_GIT_HELPERS_FORKNAME=my
+#   git remote add  https://github.com/ol-alexandra/ol-git-helpers $GG_GIT_HELPERS_FORKNAME
 #
 # Branches should be created via git gowork in both copies (or via any
 # other way you like).
@@ -580,16 +580,16 @@ is_sync_ready()
 #
 git_gosyncfrom()
 {
-    is_sync_ready && git_gopr -F "$OL_GIT_HELPERS_FORKNAME"
+    is_sync_ready && git_gopr -F "$GG_GIT_HELPERS_FORKNAME"
 }
 
 git_gosyncto()
 {
     is_sync_ready && \
-        git fetch "${OL_GIT_HELPERS_FORKNAME}" $(git branchname) && \
-        read -p "Overwrite the branch from $(git remote get-url ${OL_GIT_HELPERS_FORKNAME}) ?" yn
+        git fetch "${GG_GIT_HELPERS_FORKNAME}" $(git branchname) && \
+        read -p "Overwrite the branch from $(git remote get-url ${GG_GIT_HELPERS_FORKNAME}) ?" yn
     if [ "$yn" = "y" -o "$yn" = "Y" ] ; then
-        git reset --hard "${OL_GIT_HELPERS_FORKNAME}"/$(git branchname)
+        git reset --hard "${GG_GIT_HELPERS_FORKNAME}"/$(git branchname)
     else
         echo "Declined"
     fi
