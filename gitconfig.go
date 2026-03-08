@@ -19,7 +19,7 @@
 	gostatus = !sh -c 'git -c color.ui=always branch -vv |grep --color=never ^*'
 
 	gopr = "!source ~/.bashrc.gitgo; git_gopr"
-	gorbt = "!. ~/.bashrc.gitgo; git_gorbt"
+	gorbt = "!PATH=$HOME/.local/bin:$PATH; gg rbt"
 
         gopublish =  "!. ~/.bashrc.gitgo; git_gopublish"
 

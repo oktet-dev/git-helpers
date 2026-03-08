@@ -312,6 +312,10 @@ gitgo_summary2bugs()
 
 rbt_defaults_init=false
 
+# Deprecated: gorbt is now implemented in Python as `gg rbt`.
+# These bash functions are kept for backwards compatibility with
+# users who source bashrc.gitgo directly.
+
 # Internal functions useful to init/restore defaults when debugging a
 # single-function with sourced bashrc.gitgo
 git_gorbt_defaults()
