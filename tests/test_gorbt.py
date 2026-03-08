@@ -21,6 +21,16 @@ class TestPostOneDryRun:
         assert "--update" in r.stdout
         assert "--guess-description" in r.stdout
 
+    def test_dry_run_quotes_summary(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        """Summary with spaces must be shell-quoted in dry-run output."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-42: fix crash")
+        git_repo.commit("BUG-43: add tests")
+        r = git_repo.run_gg("rbt", "-d")
+        # --key= prefix stays unquoted, value is quoted
+        assert "--summary='[1/2]: BUG-42: fix crash'" in r.stdout
+        assert "--summary='[2/2]: BUG-43: add tests'" in r.stdout
+
     def test_depends_on_passed(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
         git_repo.create_branch("feature", "master")
         git_repo.commit("BUG-1: first")

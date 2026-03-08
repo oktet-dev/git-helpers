@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,18 @@ from pathlib import Path
 from gg import bugs, git
 
 _REVIEW_RE = re.compile(r"^Review request #(\d+) posted\.", re.MULTILINE)
+
+
+def _shell_quote_arg(arg: str) -> str:
+    """Quote an argument, keeping --key= prefix unquoted for readability."""
+    if "=" in arg and arg.startswith("--"):
+        key, _, value = arg.partition("=")
+        return f"{key}={shlex.quote(value)}"
+    return shlex.quote(arg)
+
+
+def _shell_join(cmd: list[str]) -> str:
+    return " ".join(_shell_quote_arg(a) for a in cmd)
 
 
 @dataclass
@@ -72,8 +85,9 @@ def post_one(
     cmd.append(rev)
 
     if dry_run:
-        print(" ".join(cmd))
-        return PostResult(review_id=None, output=" ".join(cmd))
+        line = _shell_join(cmd)
+        print(line)
+        return PostResult(review_id=None, output=line)
 
     r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     output = r.stdout + r.stderr
