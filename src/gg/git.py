@@ -37,6 +37,11 @@ def rev_range(*, cwd: Path | None = None) -> str:
     return f"{tracking_branch(cwd=cwd)}..HEAD"
 
 
+def diff_tree(rev: str, *, cwd: Path | None = None) -> str:
+    """Raw diff for a single commit (no commit metadata)."""
+    return _run("diff-tree", "--no-commit-id", "-p", rev, cwd=cwd)
+
+
 def list_revs(range_spec: str, *, cwd: Path | None = None) -> list[str]:
     """Return list of short commit hashes in chronological order."""
     output = _run("log", "--reverse", "--format=%h", range_spec, cwd=cwd)
