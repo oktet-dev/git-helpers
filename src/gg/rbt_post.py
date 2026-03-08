@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -75,12 +74,6 @@ def post_one(
     if dry_run:
         print(" ".join(cmd))
         return PostResult(review_id=None, output=" ".join(cmd))
-
-    # In update mode, confirm with user (if interactive)
-    if not first_post and sys.stdin.isatty():
-        yn = input(f"Update {summary_text}? patch (y/n): ")
-        if yn.lower() != "y":
-            return PostResult(review_id=None, output="skipped")
 
     r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     output = r.stdout + r.stderr
