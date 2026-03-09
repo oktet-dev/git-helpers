@@ -89,7 +89,9 @@ def post_one(
         print(line)
         return PostResult(review_id=None, output=line)
 
-    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    # In update mode rbt prompts "Update Review Request #NNN?" -- auto-confirm
+    stdin = "yes\n" if not first_post else None
+    r = subprocess.run(cmd, cwd=cwd, input=stdin, capture_output=True, text=True)
     output = r.stdout + r.stderr
     print(output, end="")
 
