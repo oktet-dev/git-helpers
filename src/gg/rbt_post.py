@@ -40,6 +40,7 @@ def post_one(
     first_post: bool = True,
     publish: bool = False,
     dry_run: bool = False,
+    verbose: bool = False,
     reviewers: list[str] | None = None,
     groups: list[str] | None = None,
     explicit_branch: str | None = None,
@@ -93,7 +94,8 @@ def post_one(
     stdin = "yes\n" if not first_post else None
     r = subprocess.run(cmd, cwd=cwd, input=stdin, capture_output=True, text=True)
     output = r.stdout + r.stderr
-    print(output, end="")
+    if verbose:
+        print(output, end="")
 
     m = _REVIEW_RE.search(r.stdout)
     review_id = m.group(1) if m else None

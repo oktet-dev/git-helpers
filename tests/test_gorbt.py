@@ -1,8 +1,16 @@
 """Tests for gg rbt -- ReviewBoard posting via the Python CLI."""
 
+import re
 import subprocess
 
 from tests.conftest import GitRepo, RbtMock
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    """Strip ANSI escape sequences for assertion readability."""
+    return _ANSI_RE.sub("", text)
 
 
 class TestPostOneDryRun:
@@ -151,11 +159,12 @@ class TestSmartUpdate:
         git_repo.run_gg("rbt")
         assert rbt_mock.call_count() == 2
 
-        r = git_repo.run_gg("rbt", "-u")
+        r = git_repo.run_gg("rbt", "-u", "--progress")
+        out = _plain(r.stdout)
         # No new rbt calls -- both patches unchanged
         assert rbt_mock.call_count() == 2
-        assert "skip (unchanged): BUG-1: first" in r.stdout
-        assert "skip (unchanged): BUG-2: second" in r.stdout
+        assert "skip (unchanged): BUG-1: first" in out
+        assert "skip (unchanged): BUG-2: second" in out
 
     def test_update_posts_changed(
         self, git_repo: GitRepo, rbt_mock: RbtMock
@@ -171,10 +180,12 @@ class TestSmartUpdate:
         git_repo.git("add", "extra_file")
         git_repo.git("commit", "--amend", "--no-edit")
 
-        r = git_repo.run_gg("rbt", "-u")
+        r = git_repo.run_gg("rbt", "-u", "--progress")
+        out = _plain(r.stdout)
         # Only the amended commit should be posted
         assert rbt_mock.call_count() == 3
-        assert "skip (unchanged): BUG-1: first" in r.stdout
+        assert "skip (unchanged): BUG-1: first" in out
+        assert "posting (2/2): BUG-2: second ..." in out
 
     def test_mixed_skip_and_post(
         self, git_repo: GitRepo, rbt_mock: RbtMock
@@ -208,11 +219,12 @@ class TestSmartUpdate:
             text=True,
         )
 
-        r = git_repo.run_gg("rbt", "-u")
+        r = git_repo.run_gg("rbt", "-u", "--progress")
+        out = _plain(r.stdout)
         # First and third unchanged, second changed
         assert rbt_mock.call_count() == 4
-        assert "skip (unchanged): BUG-1: first" in r.stdout
-        assert "skip (unchanged): BUG-3: third" in r.stdout
+        assert "skip (unchanged): BUG-1: first" in out
+        assert "skip (unchanged): BUG-3: third" in out
 
     def test_update_without_cache_posts_everything(
         self, git_repo: GitRepo, rbt_mock: RbtMock
@@ -221,9 +233,12 @@ class TestSmartUpdate:
         git_repo.create_branch("feature", "master")
         git_repo.commit("BUG-1: first")
         git_repo.commit("BUG-2: second")
-        r = git_repo.run_gg("rbt", "-u")
+        r = git_repo.run_gg("rbt", "-u", "--progress")
+        out = _plain(r.stdout)
         assert rbt_mock.call_count() == 2
-        assert "skip" not in r.stdout
+        assert "skip" not in out
+        assert "posting (1/2): BUG-1: first ..." in out
+        assert "posting (2/2): BUG-2: second ..." in out
 
     def test_no_prompt_needed(
         self, git_repo: GitRepo, rbt_mock: RbtMock
@@ -244,6 +259,30 @@ class TestSmartUpdate:
         git_repo.run_gg("rbt", "-d")
         assert not (git_repo.work_dir / ".gg" / "posted-diffs").exists()
 
+    def test_progress_on_first_post(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        """First post shows progress for each patch."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        git_repo.commit("BUG-2: second")
+        git_repo.commit("BUG-3: third")
+        r = git_repo.run_gg("rbt", "--progress")
+        out = _plain(r.stdout)
+        assert "posting (1/3): BUG-1: first ..." in out
+        assert "posting (2/3): BUG-2: second ..." in out
+        assert "posting (3/3): BUG-3: third ..." in out
+
+    def test_single_commit_progress(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        """Single commit shows progress without numbering."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: only one")
+        r = git_repo.run_gg("rbt", "--progress")
+        out = _plain(r.stdout)
+        assert "posting: BUG-1: only one ..." in out
+
     def test_single_commit_update_skips(
         self, git_repo: GitRepo, rbt_mock: RbtMock
     ) -> None:
@@ -253,6 +292,53 @@ class TestSmartUpdate:
         git_repo.run_gg("rbt")
         assert rbt_mock.call_count() == 1
 
-        r = git_repo.run_gg("rbt", "-u")
+        r = git_repo.run_gg("rbt", "-u", "--progress")
+        out = _plain(r.stdout)
         assert rbt_mock.call_count() == 1
-        assert "skip (unchanged): BUG-1: only one" in r.stdout
+        assert "skip (unchanged): BUG-1: only one" in out
+
+    def test_progress_is_bold(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        """Progress lines use bold ANSI formatting."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        git_repo.commit("BUG-2: second")
+        r = git_repo.run_gg("rbt", "--progress")
+        assert "\x1b[1mposting (1/2):" in r.stdout
+        assert "\x1b[0m" in r.stdout
+
+    def test_no_output_without_flags(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        """Without --progress or -v, no progress or rbt output."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        git_repo.commit("BUG-2: second")
+        r = git_repo.run_gg("rbt")
+        out = _plain(r.stdout)
+        assert "posting" not in out
+        assert "skip" not in out
+        assert "Review request" not in out
+
+    def test_progress_no_rbt_output(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        """--progress shows progress lines but not raw rbt output."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        r = git_repo.run_gg("rbt", "--progress")
+        out = _plain(r.stdout)
+        assert "posting: BUG-1: first ..." in out
+        assert "Review request" not in out
+
+    def test_verbose_shows_rbt_output(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        """-v shows both progress and raw rbt output."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        r = git_repo.run_gg("rbt", "-v")
+        out = _plain(r.stdout)
+        assert "posting: BUG-1: first ..." in out
+        assert "Review request" in out

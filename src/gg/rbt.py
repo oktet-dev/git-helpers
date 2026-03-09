@@ -8,6 +8,9 @@ from pathlib import Path
 from gg import diff_cache, git
 from gg.rbt_post import post_one
 
+_BOLD = "\033[1m"
+_RESET = "\033[0m"
+
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     """Register the rbt subcommand."""
@@ -19,6 +22,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p.add_argument("-G", "--groups", action="append", default=[], help="review group (--target-groups)")
     p.add_argument("-b", "--branch", default=None, help="explicit branch for --branch arg")
     p.add_argument("-u", "--update", action="store_true", help="update existing review requests")
+    p.add_argument("--progress", action="store_true", help="print progress for each patch")
+    p.add_argument("-v", "--verbose", action="store_true", help="progress + raw rbt output")
     p.add_argument(
         "-C", "--continue-from", type=int, default=0, metavar="N",
         help="continue numbering from patch N",
@@ -41,6 +46,7 @@ def run(args: argparse.Namespace) -> int:
     """Execute the rbt subcommand."""
     cwd = Path.cwd()
     first_post = not args.update
+    show_progress = args.progress or args.verbose
 
     # rbt is not happy with reviewer options passed during update
     reviewers = args.users if first_post else []
@@ -67,15 +73,19 @@ def run(args: argparse.Namespace) -> int:
         unchanged, h = _is_unchanged(rev, cached, cwd)
         new_hashes.add(h)
 
+        summary_text = git.summary(rev, cwd=cwd)
         if args.update and unchanged:
-            summary_text = git.summary(rev, cwd=cwd)
-            print(f"skip (unchanged): {summary_text}")
+            if show_progress:
+                print(f"{_BOLD}skip (unchanged): {summary_text}{_RESET}")
         else:
+            if show_progress:
+                print(f"{_BOLD}posting: {summary_text} ...{_RESET}", flush=True)
             post_one(
                 rev, tracking,
                 first_post=first_post,
                 publish=args.publish,
                 dry_run=args.dry,
+                verbose=args.verbose,
                 reviewers=reviewers,
                 groups=groups,
                 explicit_branch=args.branch,
@@ -93,9 +103,17 @@ def run(args: argparse.Namespace) -> int:
         new_hashes.add(h)
 
         if args.update and unchanged:
-            summary_text = git.summary(rev, cwd=cwd)
-            print(f"skip (unchanged): {summary_text}")
+            if show_progress:
+                summary_text = git.summary(rev, cwd=cwd)
+                print(f"{_BOLD}skip (unchanged): {summary_text}{_RESET}")
             continue
+
+        if show_progress:
+            summary_text = git.summary(rev, cwd=cwd)
+            print(
+                f"{_BOLD}posting ({idx}/{total}): {summary_text} ...{_RESET}",
+                flush=True,
+            )
 
         if args.no_numbers:
             num_string = ""
@@ -107,6 +125,7 @@ def run(args: argparse.Namespace) -> int:
             first_post=first_post,
             publish=args.publish,
             dry_run=args.dry,
+            verbose=args.verbose,
             reviewers=reviewers,
             groups=groups,
             explicit_branch=args.branch,
