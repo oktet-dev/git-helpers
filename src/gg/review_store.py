@@ -115,3 +115,23 @@ def save_diff_hashes(
         conn.commit()
     finally:
         conn.close()
+
+
+def clear_branch(branch: str, *, cwd: Path | None = None) -> None:
+    """Delete all reviews and diff hashes for a branch."""
+    conn = _connect(cwd=cwd)
+    try:
+        conn.execute("DELETE FROM reviews WHERE branch = ?", (branch,))
+        conn.execute("DELETE FROM diff_hashes WHERE branch = ?", (branch,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def reinit_db(*, cwd: Path | None = None) -> None:
+    """Delete and recreate the reviews database."""
+    path = _db_path(cwd=cwd)
+    if path.exists():
+        path.unlink()
+    # Reconnecting triggers CREATE TABLE IF NOT EXISTS
+    _connect(cwd=cwd).close()
