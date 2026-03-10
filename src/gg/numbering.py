@@ -38,9 +38,15 @@ def assign_numbers(
         if action.old_entry is not None:
             labels[i] = str(action.old_entry.position + 1)
 
-    # Second pass: assign fractional positions to new (unmatched) commits
+    # Second pass: fractional positions for inserts *between* matched commits
     for i, action in enumerate(non_discard):
         if labels[i] is not None:
+            continue
+        # Only use fractional if there's a matched commit after this one
+        has_following_match = any(
+            labels[j] is not None for j in range(i + 1, len(non_discard))
+        )
+        if not has_following_match:
             continue
         # Find preceding matched position
         prev_int = 0
@@ -57,7 +63,7 @@ def assign_numbers(
                 frac_idx += 1
         labels[i] = f"{prev_int + 1}.{frac_idx}" if prev_int > 0 else f"0.{frac_idx}"
 
-    # Third pass: fill any remaining gaps (appends after all matched)
+    # Third pass: integer positions for appends after all matched commits
     next_int = 0
     for i in range(len(non_discard) - 1, -1, -1):
         if non_discard[i].old_entry is not None:
