@@ -148,7 +148,7 @@ class TestSmartUpdate:
         git_repo.create_branch("feature", "master")
         git_repo.commit("BUG-1: first")
         git_repo.run_gg("rbt")
-        assert (git_repo.work_dir / ".gg" / "posted-diffs").exists()
+        assert (git_repo.work_dir / ".gg" / "reviews.db").exists()
 
     def test_update_skips_unchanged(
         self, git_repo: GitRepo, rbt_mock: RbtMock
@@ -257,7 +257,7 @@ class TestSmartUpdate:
         git_repo.commit("BUG-1: first")
         git_repo.commit("BUG-2: second")
         git_repo.run_gg("rbt", "-d")
-        assert not (git_repo.work_dir / ".gg" / "posted-diffs").exists()
+        assert not (git_repo.work_dir / ".gg").exists()
 
     def test_progress_on_first_post(
         self, git_repo: GitRepo, rbt_mock: RbtMock

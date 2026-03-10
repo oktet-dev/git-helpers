@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from gg import diff_cache, git
+from gg import diff_cache, git, review_store
 from gg.rbt_post import post_one
 
 _BOLD = "\033[1m"
@@ -64,8 +64,10 @@ def run(args: argparse.Namespace) -> int:
     total = len(revs) + continue_from
     depends = args.depends_on
 
-    cached = diff_cache.load_hashes(cwd=cwd) if args.update else set()
+    branch_name = git.branchname(cwd=cwd)
+    cached = diff_cache.load_hashes(cwd=cwd, branch=branch_name) if args.update else set()
     new_hashes: set[str] = set()
+    review_entries: list[review_store.ReviewEntry] = []
 
     # Single commit without --continue: no numbering
     if len(revs) == 1 and continue_from == 0:
@@ -80,7 +82,7 @@ def run(args: argparse.Namespace) -> int:
         else:
             if show_progress:
                 print(f"{_BOLD}posting: {summary_text} ...{_RESET}", flush=True)
-            post_one(
+            result = post_one(
                 rev, tracking,
                 first_post=first_post,
                 publish=args.publish,
@@ -92,9 +94,18 @@ def run(args: argparse.Namespace) -> int:
                 depends_on=depends,
                 cwd=cwd,
             )
+            if result.review_id:
+                review_entries.append(review_store.ReviewEntry(
+                    branch=branch_name, position=1,
+                    review_id=result.review_id,
+                    subject=review_store.strip_prefix(summary_text),
+                    diff_hash=h,
+                ))
 
         if not args.dry:
-            diff_cache.save_hashes(new_hashes, cwd=cwd)
+            diff_cache.save_hashes(new_hashes, cwd=cwd, branch=branch_name)
+            if review_entries:
+                review_store.save_reviews(review_entries, cwd=cwd)
         return 0
 
     # Multiple commits: loop with numbering and dependency chaining
@@ -108,8 +119,8 @@ def run(args: argparse.Namespace) -> int:
                 print(f"{_BOLD}skip (unchanged): {summary_text}{_RESET}")
             continue
 
+        summary_text = git.summary(rev, cwd=cwd)
         if show_progress:
-            summary_text = git.summary(rev, cwd=cwd)
             print(
                 f"{_BOLD}posting ({idx}/{total}): {summary_text} ...{_RESET}",
                 flush=True,
@@ -136,7 +147,15 @@ def run(args: argparse.Namespace) -> int:
 
         if result.review_id:
             depends = result.review_id
+            review_entries.append(review_store.ReviewEntry(
+                branch=branch_name, position=idx,
+                review_id=result.review_id,
+                subject=review_store.strip_prefix(summary_text),
+                diff_hash=h,
+            ))
 
     if not args.dry:
-        diff_cache.save_hashes(new_hashes, cwd=cwd)
+        diff_cache.save_hashes(new_hashes, cwd=cwd, branch=branch_name)
+        if review_entries:
+            review_store.save_reviews(review_entries, cwd=cwd)
     return 0
