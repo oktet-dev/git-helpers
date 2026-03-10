@@ -139,24 +139,60 @@ class TestImport:
         assert "r/401" in r.stdout
         assert "r/402" in r.stdout
 
-    def test_count_mismatch(
+    def test_extra_commits_skipped_by_subject(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
     ) -> None:
-        """2 commits but 3 reviews -> exit 1."""
+        """3 commits + 2-review chain -> matches by subject, skips extra."""
         _write_api_mock(rbt_mock, {
-            "500": {"summary": "first", "blocks": ["501"]},
-            "501": {"summary": "second", "blocks": ["502"]},
-            "502": {"summary": "third", "blocks": []},
+            "500": {"summary": "fix crash", "blocks": ["501"]},
+            "501": {"summary": "add tests", "blocks": []},
         })
 
         git_repo.create_branch("feature", "master")
-        git_repo.commit("first")
-        git_repo.commit("second")
+        git_repo.commit("fix crash")
+        git_repo.commit("unrelated refactor")
+        git_repo.commit("add tests")
 
         r = git_repo.run_gg("rbt-import", "500")
-        assert r.returncode == 1
-        assert "2 commits" in r.stderr
-        assert "3 reviews" in r.stderr
+        assert r.returncode == 0
+        assert "r/500" in r.stdout
+        assert "r/501" in r.stdout
+        assert "Skipped" in r.stdout
+        assert "unrelated refactor" in r.stdout
+
+    def test_unmatched_review_errors(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """Review with no matching commit -> error."""
+        _write_api_mock(rbt_mock, {
+            "510": {"summary": "exists", "blocks": ["511"]},
+            "511": {"summary": "no such commit", "blocks": []},
+        })
+
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("exists")
+
+        r = git_repo.run_gg("rbt-import", "510")
+        assert r.returncode != 0
+        assert "Unmatched reviews" in r.stderr
+
+    def test_prefix_stripped_for_matching(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """Review summaries with [N/M]: prefix match commits without it."""
+        _write_api_mock(rbt_mock, {
+            "520": {"summary": "[1/2]: fix crash", "blocks": ["521"]},
+            "521": {"summary": "[2/2]: add tests", "blocks": []},
+        })
+
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+
+        r = git_repo.run_gg("rbt-import", "520")
+        assert r.returncode == 0
+        assert "r/520" in r.stdout
+        assert "r/521" in r.stdout
 
     def test_dry_run_no_db_write(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
@@ -238,7 +274,7 @@ class TestImport:
     ) -> None:
         """--range flag selects a subset of commits."""
         _write_api_mock(rbt_mock, {
-            "950": {"summary": "second only", "blocks": []},
+            "950": {"summary": "second", "blocks": []},
         })
 
         git_repo.create_branch("feature", "master")
