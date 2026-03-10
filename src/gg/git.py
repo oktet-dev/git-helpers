@@ -42,6 +42,11 @@ def diff_tree(rev: str, *, cwd: Path | None = None) -> str:
     return _run("diff-tree", "--no-commit-id", "-p", rev, cwd=cwd)
 
 
+def repo_root(*, cwd: Path | None = None) -> Path:
+    """Return the working tree root (parent of .git/)."""
+    return Path(_run("rev-parse", "--show-toplevel", cwd=cwd))
+
+
 def list_revs(range_spec: str, *, cwd: Path | None = None) -> list[str]:
     """Return list of short commit hashes in chronological order."""
     output = _run("log", "--reverse", "--format=%h", range_spec, cwd=cwd)
