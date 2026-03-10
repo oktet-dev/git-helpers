@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
-from gg import diff_cache, git, review_store
+from gg import diff_cache, git, rb_api, review_store
 from gg.matcher import ActionKind, NewCommit, SyncAction, reconcile
 from gg.numbering import assign_numbers
 from gg.rbt_close import close_discarded
@@ -94,13 +95,21 @@ def _execute(
             continue
 
         if action.kind == ActionKind.CREATE:
-            # New review
+            # Inherit reviewers from the depends-on review
+            reviewers: list[str] = []
+            groups: list[str] = []
+            if prev_review_id:
+                reviewers, groups = rb_api.fetch_reviewers(
+                    prev_review_id, cwd=cwd,
+                )
             result = post_one(
                 action.new_commit.rev, tracking,
                 first_post=True,
                 publish=publish,
                 dry_run=dry_run,
                 verbose=verbose,
+                reviewers=reviewers,
+                groups=groups,
                 explicit_branch=explicit_branch,
                 num_string=num_prefix,
                 depends_on=prev_review_id,
@@ -135,6 +144,25 @@ def _execute(
     return entries
 
 
+def _format_summary(actions: list[SyncAction]) -> str:
+    """One-line summary of sync action counts."""
+    counts: dict[str, int] = {}
+    for a in actions:
+        if a.kind in (ActionKind.KEEP, ActionKind.KEEP_DEP):
+            counts["kept"] = counts.get("kept", 0) + 1
+        elif a.kind == ActionKind.UPDATE:
+            counts["updated"] = counts.get("updated", 0) + 1
+        elif a.kind == ActionKind.CREATE:
+            counts["created"] = counts.get("created", 0) + 1
+        elif a.kind == ActionKind.DISCARD:
+            counts["discarded"] = counts.get("discarded", 0) + 1
+    parts = []
+    for key in ("kept", "updated", "created", "discarded"):
+        if key in counts:
+            parts.append(f"{counts[key]} {key}")
+    return "Synced: " + ", ".join(parts)
+
+
 def run(args: argparse.Namespace) -> int:
     """Execute the rbt-sync subcommand."""
     cwd = Path.cwd()
@@ -157,7 +185,7 @@ def run(args: argparse.Namespace) -> int:
     actions = reconcile(old, new)
 
     # Show plan
-    plan = format_plan(actions, renumber=args.renumber)
+    plan = format_plan(actions, renumber=args.renumber, publish=args.publish)
     print(plan)
 
     if args.dry:
@@ -176,6 +204,8 @@ def run(args: argparse.Namespace) -> int:
         initial_depends=args.depends_on,
         cwd=cwd,
     )
+
+    print(_format_summary(actions), file=sys.stderr)
 
     # Save state
     if entries:
