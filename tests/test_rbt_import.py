@@ -19,15 +19,19 @@ def _write_api_mock(rbt_mock: RbtMock, reviews: dict[str, dict]) -> None:
     # Build a bash case statement for api-get responses
     api_cases = ""
     for rid, info in reviews.items():
-        blocks_json = json.dumps([{"id": int(b)} for b in info.get("blocks", [])])
+        # Match real RB API format: blocks are link objects with href
+        blocks = [
+            {"href": f"https://rb.example.com/api/review-requests/{b}/", "method": "GET"}
+            for b in info.get("blocks", [])
+        ]
         resp = json.dumps({
             "review_request": {
                 "id": int(rid),
                 "summary": info["summary"],
-                "blocks": json.loads(blocks_json),
+                "blocks": blocks,
             }
         })
-        api_cases += f'    */api/review-requests/{rid}/*)\n'
+        api_cases += f'    */review-requests/{rid}/*)\n'
         api_cases += f"        echo '{resp}'\n"
         api_cases += "        ;;\n"
 
