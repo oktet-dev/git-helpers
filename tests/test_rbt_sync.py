@@ -1,0 +1,209 @@
+"""Tests for gg rbt-sync -- series reconciliation with ReviewBoard."""
+
+import re
+import subprocess
+
+from tests.conftest import GitRepo, RbtMock
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
+
+def _post_series(git_repo: GitRepo) -> None:
+    """Post the current series with gg rbt to seed reviews.db."""
+    r = git_repo.run_gg("rbt")
+    assert r.returncode == 0, f"gg rbt failed: {r.stderr}"
+
+
+class TestSyncDryRun:
+    def test_unchanged_series_all_keep(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+        initial_calls = rbt_mock.call_count()
+
+        r = git_repo.run_gg("rbt-sync", "-d")
+        assert r.returncode == 0
+        out = r.stdout
+        assert "keep" in out
+        # No new rbt calls in dry mode
+        assert rbt_mock.call_count() == initial_calls
+
+    def test_amended_commit_shows_update(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+
+        # Amend last commit to change its diff
+        (git_repo.work_dir / "extra").write_text("changed\n")
+        git_repo.git("add", "extra")
+        git_repo.git("commit", "--amend", "--no-edit")
+
+        r = git_repo.run_gg("rbt-sync", "-d")
+        assert r.returncode == 0
+        out = r.stdout
+        assert "keep" in out
+        assert "update" in out
+
+    def test_dropped_commit_shows_discard(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        git_repo.commit("temporary hack")
+        _post_series(git_repo)
+
+        # Drop last commit
+        git_repo.git("reset", "--hard", "HEAD~1")
+
+        r = git_repo.run_gg("rbt-sync", "-d")
+        assert r.returncode == 0
+        out = r.stdout
+        assert "discard" in out
+
+    def test_inserted_commit_shows_create(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        rev1 = git_repo.commit("fix crash")
+        rev2 = git_repo.commit("add tests")
+        _post_series(git_repo)
+
+        # Insert a commit between the two via rebase
+        full_revs = git_repo.git(
+            "log", "--reverse", "--format=%H", "master..HEAD"
+        ).stdout.strip().splitlines()
+
+        git_repo.git("checkout", full_revs[0])
+        git_repo.commit("inserted helper")
+        new_insert = git_repo.git("rev-parse", "HEAD").stdout.strip()
+        # Cherry-pick the second commit on top
+        git_repo.git("cherry-pick", full_revs[1])
+        new_head = git_repo.git("rev-parse", "HEAD").stdout.strip()
+
+        # Point the branch to the new series
+        git_repo.git("checkout", "feature")
+        git_repo.git("reset", "--hard", new_head)
+
+        r = git_repo.run_gg("rbt-sync", "-d")
+        assert r.returncode == 0
+        out = r.stdout
+        assert "create" in out
+
+    def test_renumber_flag(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+
+        r = git_repo.run_gg("rbt-sync", "-d", "--renumber")
+        assert r.returncode == 0
+        out = r.stdout
+        assert "[1/" in out
+        assert "[2/" in out
+
+
+class TestSyncExecution:
+    def test_update_posts_changed_only(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+        initial_calls = rbt_mock.call_count()
+
+        # Amend last commit
+        (git_repo.work_dir / "extra").write_text("changed\n")
+        git_repo.git("add", "extra")
+        git_repo.git("commit", "--amend", "--no-edit")
+
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0
+        # Should have posted only the changed review (update) + close none
+        new_calls = rbt_mock.call_count() - initial_calls
+        assert new_calls == 1  # one rbt post -r call
+
+    def test_discard_calls_rbt_close(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("to be dropped")
+        _post_series(git_repo)
+        initial_calls = rbt_mock.call_count()
+
+        # Drop last commit
+        git_repo.git("reset", "--hard", "HEAD~1")
+
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0
+
+        # Check that rbt close was called
+        all_calls = rbt_mock.calls()
+        close_calls = [c for c in all_calls[initial_calls:] if c[0:2] == ["post", "close"] or (len(c) > 1 and c[1] == "close")]
+        # The mock logs all rbt calls; close would be ["close", "--close-type=discarded", "ID"]
+        new_calls = all_calls[initial_calls:]
+        has_close = any("close" in c for c in new_calls)
+        assert has_close
+
+    def test_no_existing_reviews_errors(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        r = git_repo.run_gg("rbt-sync", "-d")
+        assert r.returncode == 1
+        assert "No existing reviews" in r.stdout
+
+    def test_create_posts_new_review(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        _post_series(git_repo)
+        initial_calls = rbt_mock.call_count()
+
+        # Add a new commit
+        git_repo.commit("new feature")
+
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0
+        new_calls = rbt_mock.call_count() - initial_calls
+        # One new post for the created review
+        assert new_calls >= 1
+
+
+class TestSyncState:
+    def test_reviews_db_updated_after_sync(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+
+        # Add a new commit and sync
+        git_repo.commit("new feature")
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0
+
+        # Re-running sync should show the updated state
+        r2 = git_repo.run_gg("rbt-sync", "-d")
+        assert r2.returncode == 0
+        out = r2.stdout
+        # All three should now be keep (no changes since last sync)
+        lines = [l for l in out.splitlines() if "keep" in l]
+        assert len(lines) == 3
