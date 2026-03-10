@@ -186,6 +186,132 @@ class TestSyncExecution:
         assert new_calls >= 1
 
 
+class TestPlanPublishColumn:
+    def test_publish_flag_shows_yes(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """With -p -d, update/create rows show 'yes', keep rows show '--'."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+
+        # Amend last commit to trigger update
+        (git_repo.work_dir / "extra").write_text("changed\n")
+        git_repo.git("add", "extra")
+        git_repo.git("commit", "--amend", "--no-edit")
+
+        r = git_repo.run_gg("rbt-sync", "-p", "-d")
+        assert r.returncode == 0
+        out = r.stdout
+        assert "Pub" in out
+        # keep row has '--', update row has 'yes'
+        for line in out.splitlines():
+            if "keep" in line and "keep+dep" not in line:
+                assert "--" in line
+            if "update" in line:
+                assert "yes" in line
+
+    def test_no_publish_flag_shows_draft(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """Without -p, update/create rows show 'draft'."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+
+        (git_repo.work_dir / "extra").write_text("changed\n")
+        git_repo.git("add", "extra")
+        git_repo.git("commit", "--amend", "--no-edit")
+
+        r = git_repo.run_gg("rbt-sync", "-d")
+        assert r.returncode == 0
+        out = r.stdout
+        assert "Pub" in out
+        for line in out.splitlines():
+            if "update" in line:
+                assert "draft" in line
+
+    def test_all_keep_no_pub_column(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """When all actions are keep, Pub column is omitted."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+
+        r = git_repo.run_gg("rbt-sync", "-d")
+        assert r.returncode == 0
+        assert "Pub" not in r.stdout
+
+
+class TestExecutionSummary:
+    def test_summary_after_sync(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """After sync execution, stderr has correct counts."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+
+        # Amend last commit (1 keep + 1 update)
+        (git_repo.work_dir / "extra").write_text("changed\n")
+        git_repo.git("add", "extra")
+        git_repo.git("commit", "--amend", "--no-edit")
+
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0
+        assert "Synced:" in r.stderr
+        assert "1 kept" in r.stderr
+        assert "1 updated" in r.stderr
+
+    def test_summary_with_create_and_discard(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """Summary includes created and discarded counts."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("to be dropped")
+        _post_series(git_repo)
+
+        # Drop last commit and add a new one
+        git_repo.git("reset", "--hard", "HEAD~1")
+        git_repo.commit("new feature")
+
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0
+        assert "Synced:" in r.stderr
+        assert "1 created" in r.stderr
+        assert "1 discarded" in r.stderr
+
+
+class TestReviewerInheritance:
+    def test_create_inherits_reviewers(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """New reviews inherit target-people and target-groups from depends-on."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        r = git_repo.run_gg("rbt", "-U", "alice", "-G", "devteam")
+        assert r.returncode == 0
+
+        git_repo.commit("new feature")
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0
+
+        # Find the post call for the new review (the last post call)
+        calls = rbt_mock.calls()
+        post_calls = [c for c in calls if c and c[0] == "post"]
+        last_post = post_calls[-1]
+        assert "--target-people" in last_post
+        assert "alice" in last_post
+        assert "--target-groups" in last_post
+        assert "devteam" in last_post
+
+
 class TestSyncState:
     def test_reviews_db_updated_after_sync(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
