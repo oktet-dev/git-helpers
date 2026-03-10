@@ -44,7 +44,17 @@ def fetch_review(review_id: str, *, cwd: Path | None = None) -> dict:
         "id": str(rr["id"]),
         "summary": rr["summary"],
         "blocks": [_parse_block_id(b) for b in rr.get("blocks", [])],
+        "target_people": [p["title"] for p in rr.get("target_people", [])],
+        "target_groups": [g["title"] for g in rr.get("target_groups", [])],
     }
+
+
+def fetch_reviewers(
+    review_id: str, *, cwd: Path | None = None,
+) -> tuple[list[str], list[str]]:
+    """Fetch target people and groups for a review request."""
+    review = fetch_review(review_id, cwd=cwd)
+    return review["target_people"], review["target_groups"]
 
 
 def follow_chain(first_id: str, *, cwd: Path | None = None) -> list[tuple[str, str]]:

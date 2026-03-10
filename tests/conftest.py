@@ -122,30 +122,95 @@ def _make_env(extra_path: str | None = None) -> dict[str, str]:
     return env
 
 
+_MOCK_RBT_SCRIPT = """\
+#!/usr/bin/env python3
+import json
+import os
+import re
+import sys
+
+_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+with open(os.path.join(_dir, "config.json")) as _f:
+    _cfg = json.load(_f)
+
+LOG = _cfg["log"]
+STATE_DIR = _cfg["state"]
+os.makedirs(STATE_DIR, exist_ok=True)
+
+if not os.path.exists(LOG):
+    open(LOG, "w").close()
+
+with open(LOG) as f:
+    count = sum(1 for _ in f)
+rid = count + 1000
+
+with open(LOG, "a") as f:
+    f.write(json.dumps(sys.argv[1:]) + "\\n")
+
+cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+
+if cmd == "api-get":
+    m = re.search(r"(\\d+)", sys.argv[2] if len(sys.argv) > 2 else "")
+    review_id = m.group(1) if m else "0"
+    state_file = os.path.join(STATE_DIR, review_id + ".json")
+    state = {}
+    if os.path.exists(state_file):
+        with open(state_file) as f:
+            state = json.load(f)
+    rr = {
+        "id": int(review_id),
+        "summary": state.get("summary", ""),
+        "blocks": [],
+        "target_people": [{"title": p} for p in state.get("people", [])],
+        "target_groups": [{"title": g} for g in state.get("groups", [])],
+    }
+    print(json.dumps({"review_request": rr}))
+
+elif cmd == "close":
+    print("Discarded review request.")
+
+else:
+    args = sys.argv[2:]
+    people = []
+    groups = []
+    summary = ""
+    i = 0
+    while i < len(args):
+        if args[i] == "--target-people" and i + 1 < len(args):
+            people.append(args[i + 1])
+            i += 2
+        elif args[i] == "--target-groups" and i + 1 < len(args):
+            groups.append(args[i + 1])
+            i += 2
+        elif args[i].startswith("--summary="):
+            summary = args[i].split("=", 1)[1]
+            i += 1
+        else:
+            i += 1
+    state = {"people": people, "groups": groups, "summary": summary}
+    state_file = os.path.join(STATE_DIR, str(rid) + ".json")
+    with open(state_file, "w") as f:
+        json.dump(state, f)
+
+    print(f"Review request #{rid} posted.")
+    print(f"https://reviews.example.com/r/{rid}/")
+    print(f"https://reviews.example.com/r/{rid}/diff/")
+"""
+
+
 @pytest.fixture
 def rbt_mock(tmp_path: Path) -> RbtMock:
     """Create a mock rbt script that logs calls and prints fake review IDs."""
     mock_dir = tmp_path / "rbt_mock_bin"
     mock_dir.mkdir()
     log_file = tmp_path / "rbt_calls.log"
+    state_dir = tmp_path / "rbt_state"
+
+    config = {"log": str(log_file), "state": str(state_dir)}
+    (mock_dir / "config.json").write_text(json.dumps(config))
 
     script = mock_dir / "rbt"
-    script.write_text(f"""\
-#!/usr/bin/env bash
-# Auto-incrementing review ID based on line count
-LOG="{log_file}"
-touch "$LOG"
-COUNT=$(wc -l < "$LOG" | tr -d ' ')
-ID=$(( COUNT + 1000 ))
-
-# Log the call as JSON
-ARGS_JSON=$(python3 -c "import sys, json; print(json.dumps(sys.argv[1:]))" "$@")
-echo "$ARGS_JSON" >> "$LOG"
-
-echo "Review request #$ID posted."
-echo "https://reviews.example.com/r/$ID/"
-echo "https://reviews.example.com/r/$ID/diff/"
-""")
+    script.write_text(_MOCK_RBT_SCRIPT)
     script.chmod(0o755)
 
     return RbtMock(script_dir=mock_dir, log_file=log_file)
