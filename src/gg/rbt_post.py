@@ -37,6 +37,7 @@ def post_one(
     rev: str,
     branch: str,
     *,
+    review_id: str | None = None,
     first_post: bool = True,
     publish: bool = False,
     dry_run: bool = False,
@@ -69,15 +70,18 @@ def post_one(
         for group in groups:
             cmd.extend(["--target-groups", group])
 
+    if review_id:
+        cmd.extend(["-r", review_id])
+
     cmd.append(f"--summary={full_summary}")
 
-    if first_post:
+    if first_post and not review_id:
         branch_arg = explicit_branch or branch
         cmd.append(f"--branch={branch_arg}")
         cmd.append(f"--tracking-branch={branch}")
         if bug_ids:
             cmd.append(f"--bugs-closed={bug_ids}")
-    else:
+    elif not review_id:
         cmd.extend(["--update", "--guess-description", "yes"])
 
     if depends_on:
@@ -91,7 +95,7 @@ def post_one(
         return PostResult(review_id=None, output=line)
 
     # In update mode rbt prompts "Update Review Request #NNN?" -- auto-confirm
-    stdin = "yes\n" if not first_post else None
+    stdin = "yes\n" if (not first_post or review_id) else None
     r = subprocess.run(cmd, cwd=cwd, input=stdin, capture_output=True, text=True)
     output = r.stdout + r.stderr
     if verbose:
