@@ -49,4 +49,4 @@ class TestLoadSaveHashes:
         assert not gg_dir.exists()
         diff_cache.save_hashes({"abc"}, cwd=git_repo.work_dir)
         assert gg_dir.is_dir()
-        assert (gg_dir / "posted-diffs").exists()
+        assert (gg_dir / "reviews.db").exists()

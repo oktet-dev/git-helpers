@@ -1,28 +1,16 @@
-"""Cache of posted diff hashes for smart update detection."""
+"""Cache of posted diff hashes for smart update detection.
+
+Uses branch-scoped sqlite storage via review_store.
+Falls back to the legacy .gg/posted-diffs flat file on first read,
+migrating its contents into the DB.
+"""
 
 from __future__ import annotations
 
 import hashlib
 from pathlib import Path
 
-from gg import git
-
-_CACHE_DIR = ".gg"
-_CACHE_FILE = "posted-diffs"
-
-
-def _repo_root(cwd: Path | None = None) -> Path:
-    """Return the working tree root (parent of .git/)."""
-    import subprocess
-
-    r = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return Path(r.stdout.strip())
+from gg import git, review_store
 
 
 def diff_hash(rev: str, *, cwd: Path | None = None) -> str:
@@ -31,20 +19,34 @@ def diff_hash(rev: str, *, cwd: Path | None = None) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def _cache_path(cwd: Path | None = None) -> Path:
-    return _repo_root(cwd) / _CACHE_DIR / _CACHE_FILE
+def _legacy_path(cwd: Path | None = None) -> Path:
+    return git.repo_root(cwd=cwd) / ".gg" / "posted-diffs"
 
 
-def load_hashes(*, cwd: Path | None = None) -> set[str]:
-    """Load posted diff hashes. Empty set if no cache file."""
-    path = _cache_path(cwd)
-    if not path.exists():
+def _migrate_legacy(branch: str, *, cwd: Path | None = None) -> set[str]:
+    """Read and migrate the legacy flat file, then delete it."""
+    legacy = _legacy_path(cwd)
+    if not legacy.exists():
         return set()
-    return set(path.read_text().strip().splitlines())
+    hashes = set(legacy.read_text().strip().splitlines())
+    if hashes:
+        review_store.save_diff_hashes(branch, hashes, cwd=cwd)
+    legacy.unlink()
+    return hashes
 
 
-def save_hashes(hashes: set[str], *, cwd: Path | None = None) -> None:
-    """Write sorted hashes to .gg/posted-diffs, creating dir if needed."""
-    path = _cache_path(cwd)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(sorted(hashes)) + "\n")
+def load_hashes(*, cwd: Path | None = None, branch: str | None = None) -> set[str]:
+    """Load posted diff hashes for current branch. Migrates legacy file if present."""
+    br = branch or git.branchname(cwd=cwd)
+    legacy = _legacy_path(cwd)
+    if legacy.exists():
+        return _migrate_legacy(br, cwd=cwd)
+    return review_store.load_diff_hashes(br, cwd=cwd)
+
+
+def save_hashes(
+    hashes: set[str], *, cwd: Path | None = None, branch: str | None = None,
+) -> None:
+    """Write diff hashes for current branch to sqlite."""
+    br = branch or git.branchname(cwd=cwd)
+    review_store.save_diff_hashes(br, hashes, cwd=cwd)
