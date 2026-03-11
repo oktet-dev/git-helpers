@@ -128,6 +128,21 @@ def clear_branch(branch: str, *, cwd: Path | None = None) -> None:
         conn.close()
 
 
+def list_branches(*, cwd: Path | None = None) -> list[str]:
+    """Return sorted branch names that have any data in the DB."""
+    conn = _connect(cwd=cwd)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT branch FROM reviews "
+            "UNION "
+            "SELECT DISTINCT branch FROM diff_hashes "
+            "ORDER BY branch",
+        ).fetchall()
+        return [row[0] for row in rows]
+    finally:
+        conn.close()
+
+
 def reinit_db(*, cwd: Path | None = None) -> None:
     """Delete and recreate the reviews database."""
     path = _db_path(cwd=cwd)
