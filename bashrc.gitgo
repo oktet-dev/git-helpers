@@ -580,11 +580,34 @@ is_sync_ready()
 #
 git_gosyncfrom()
 {
+    is_help $* && {
+        do_help ""
+        do_help "Usage: git gosyncfrom"
+        do_help ""
+        do_help "Push the current branch to the fork configured via"
+        do_help "GG_GIT_HELPERS_FORKNAME. Counterpart of gosyncto."
+        do_help ""
+        do_help "Requires GG_GIT_HELPERS_FORKNAME env var."
+        return 0
+    }
+
     is_sync_ready && git_gopr -F "$GG_GIT_HELPERS_FORKNAME"
 }
 
 git_gosyncto()
 {
+    is_help $* && {
+        do_help ""
+        do_help "Usage: git gosyncto"
+        do_help ""
+        do_help "Fetch the current branch from the fork configured via"
+        do_help "GG_GIT_HELPERS_FORKNAME and reset --hard to it."
+        do_help "Counterpart of gosyncfrom."
+        do_help ""
+        do_help "Requires GG_GIT_HELPERS_FORKNAME env var."
+        return 0
+    }
+
     is_sync_ready && \
         git fetch "${GG_GIT_HELPERS_FORKNAME}" $(git branchname) && \
         read -p "Overwrite the branch from $(git remote get-url ${GG_GIT_HELPERS_FORKNAME}) ?" yn
