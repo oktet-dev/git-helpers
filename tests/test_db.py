@@ -41,6 +41,25 @@ class TestList:
         assert "r/1000" in result.stdout
 
 
+    def test_all_shows_multiple_branches(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature")
+        _seed(git_repo, branch="alpha")
+        _seed(git_repo, branch="beta")
+        result = git_repo.run_gg("db", "--list", "--all")
+        assert result.returncode == 0
+        assert "Branch: alpha" in result.stdout
+        assert "Branch: beta" in result.stdout
+        assert "---" in result.stdout
+
+    def test_all_no_data(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        git_repo.create_branch("feature")
+        result = git_repo.run_gg("db", "--list", "--all")
+        assert result.returncode == 0
+        assert "No cached state." in result.stdout
+
+
 class TestClear:
     def test_removes_branch_data(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
         git_repo.create_branch("feature")
