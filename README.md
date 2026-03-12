@@ -1,6 +1,10 @@
 Git Helpers
 ===========
 
+A collection of shell functions and git aliases that implement a
+branch-based development workflow on top of git. Supports both
+ReviewBoard (`rbt`) and GitHub pull request workflows.
+
 Installation
 ------------
 
@@ -10,227 +14,184 @@ cd git-helpers
 ./install.sh
 ```
 
-and follow the instructions.
+The installer will:
 
-### Python CLI (`gg`)
+1. Symlink `bashrc.gitgo` to `~/.bashrc.gitgo`
+2. Install the Python `gg` CLI tool via `uv tool install`
+3. Print snippets to add to your `~/.bashrc` and `~/.gitconfig`
 
-Some commands (starting with `gorbt`) have been rewritten in Python.
-Install the `gg` tool with:
-
-```shell
-uv tool install -e /path/to/git-helpers
-```
-
-This places the `gg` binary in `~/.local/bin/`. The git aliases
-automatically add this to PATH.
-
-Generic rule
-------------
-
-All wrappers have help that can be invoked via `-h/--help`:
-
-```
-[130] $ git gorbt -h
-usage: gg rbt [-h] [-d] [-n] [-p] [-U USERS] [-G GROUPS] [-b BRANCH] [-u]
-              [-C N] [-D ID]
-              [range]
-
-positional arguments:
-  range                 revision range (default: tracking..HEAD)
-
-options:
-  -h, --help            show this help message and exit
-  -d, --dry             print rbt commands without executing
-  -n, --no-numbers      don't number the patches
-  -p, --publish         publish review requests
-  -U USERS, --users USERS
-                        reviewer (--target-people)
-  -G GROUPS, --groups GROUPS
-                        review group (--target-groups)
-  -b BRANCH, --branch BRANCH
-                        explicit branch for --branch arg
-  -u, --update          update existing review requests
-  -C N, --continue-from N
-                        continue numbering from patch N
-  -D ID, --depends-on ID
-                        first patch depends on review request ID
-```
-
-Simple one-patch workflow
--------------------------
-
-Ensure I'm on the right branch:
-`git checkout master`
-```
-Switched to branch 'master'
-Your branch is up to date with 'origin/master'.
-```
-
-I'm going to fix bug Bug239.  Let's use it as my local branch name:
-`git gowork Bug239`
-```
-Branch 'Bug239' set up to track local branch 'master'.
-Switched to a new branch 'Bug239'
-```
-
-Edit things, look at the result with `git diff`.  Now I want to store it
-all:
-`git commit -a -m"Bug239: ensure that a neighbour is really deleted"`
-```
-[Bug239 ab1747b9e] Bug239: make everyonce life even better
- 1 file changed, 10 insertions(+), 3 deletions(-)
-```
-Some people think that you should not specify your commit message via `-m`,
-but use the editor `git` spawns for you.  I say: "Do as you like!"
-
-Run `git show` to look at your last commit.  Use `git commit --amend` to
-fix things.
-
-Now it looks good; it is time to publish it on the Review Board:
-`git gorbt`
-```
-Review request #14587 posted.
-
-https://reviewboard.oktet.co.il/r/14587/
-https://reviewboard.oktet.co.il/r/14587/diff/
-```
-You see that bug number is already filled in from your commit message, but
-you have to write down the "Testing done" section.
-
-If you want to know in advance which rbt command will be
-called - `git gorbt -d <other options>` will tell you.
-
-You can set reviewers, ask to publish etc. from the command line:
-`git gorbt -p -U kostik -G te`
-
-Hooray, I've got "Ship it!".  First of all, let's check that my patch applies
-to the recent codebase: `git gopull`.
-It spawns an editor asking how do you want to rebase on top of the recent
-changes.  For now, just quit.
-```
-From https://github.com/oktet-dev/life
-   226cbe768..f5a52133c  master     -> master
-   226cbe768..f5a52133c  master     -> origin/master
-Successfully rebased and updated refs/heads/Bug239
-```
-
-Let's re-test it.
-
-It's OK.  We can push:
-`git gopush`
-
-
-This branch is not needed any more.
-`git goclose`
-
-Multi-patch
------------
-
-Actually it's the same as single. You have some convenience switches.
+If `uv` is not installed, the script warns and skips the Python CLI.
+You can install it later with:
 
 ```shell
-$ git gowork Bug533
-$ git commit -m "Bug 533: add information about alias help
-$ git commit -m "Bug 533: add info about dry runs for rbt commands"
+./install.sh --gg
 ```
 
-Check what will happen:
+On macOS, make sure `gsed` is in PATH.
 
-```
-$ git gorbt -p -d -U kostik
-rbt post -p --target-people kostik --summary=[1/2]: doc: add information about alias help --branch=master --tracking-branch=master --bugs-closed=... 6ff614c
-rbt post -p --target-people kostik --summary=[2/2]: doc: add info about dry runs for rbt commands --branch=master --tracking-branch=master --bugs-closed=... e601c8d
-```
-
-And if you're fine:
-
-```
-$ git gorbt -p -U kostik                                                                                                                                                                                                                                                   x
-Review request #14680 posted.
-
-https://reviewboard.oktet.co.il/r/14680/
-https://reviewboard.oktet.co.il/r/14680/diff/
-Review request #14681 posted.
-
-https://reviewboard.oktet.co.il/r/14681/
-https://reviewboard.oktet.co.il/r/14681/diff/
-```
-
-Upstream branches
+Command reference
 -----------------
 
-Sometimes you create a user branch:
+All commands support `-h`/`--help`. Most commands that perform remote
+operations support `-d`/`--dry` for dry-run.
+
+### Branch lifecycle (bash, via git aliases)
+
+| Command | Description |
+|---------|-------------|
+| `git gowork <name>` | Create a tracking branch from the current branch |
+| `git gopull` | Fetch tracking branch and rebase on top of it |
+| `git gopush` | Push current branch to origin's tracking branch |
+| `git goclose` | Switch to tracking branch and delete the current one |
+| `git godiscard` | Discard all changes and delete the branch |
+| `git gopublish` | Push branch to origin as `user/<UID>/<branch>` |
+| `git gostatus` | Show current branch with verbose tracking info |
+| `git golog` | Git log for commits since tracking branch |
+| `git goshow` | Git show for commits since tracking branch |
+
+### ReviewBoard (Python CLI, via `git gg`)
+
+| Command | Description |
+|---------|-------------|
+| `git gg rbt` | Post commit series to ReviewBoard |
+| `git gg rbt-sync` | Reconcile series with ReviewBoard (keep/update/create/discard) |
+| `git gg rbt-sync -i` | Interactive mode -- edit the sync plan in `$EDITOR` before executing |
+| `git gg rbt-import` | Import an existing ReviewBoard chain into `reviews.db` |
+| `git gg db` | Inspect and manage `.gg/reviews.db` (list/clear/reinit) |
+
+The legacy `git gorbt` alias still works and delegates to `git gg rbt`.
+
+### Pull requests (bash)
+
+| Command | Description |
+|---------|-------------|
+| `git gopr` | Create a GitHub pull request from the current branch |
+
+### Cross-repo sync (bash)
+
+| Command | Description |
+|---------|-------------|
+| `git gosyncfrom` | Push current branch to the configured fork |
+| `git gosyncto` | Fetch current branch from the configured fork |
+
+Set `GG_GIT_HELPERS_FORKNAME` to configure the fork remote name.
+
+### Utility aliases (gitconfig)
+
+| Alias | Description |
+|-------|-------------|
+| `git up` | `pull --rebase` |
+| `git refresh` | `pull --rebase` for the tracking branch |
+| `git tree` / `git gotree` | Graph-based log visualization |
+| `git graft` | Cherry-pick a commit |
+| `git show-stat` | `show --stat` |
+| `git branchname` | Print branch name of a revision |
+| `git summary` | Print subject line of a revision |
+
+Typical workflows
+-----------------
+
+### Single patch
 
 ```shell
 git checkout master
+git gowork Bug239
+
+# edit, test...
+git commit -a -m "Bug239: ensure that a neighbour is really deleted"
+
+# Post for review
+git gorbt
+
+# After "Ship it!" -- rebase, push, clean up
+git gopull
+git gopush
+git goclose
+```
+
+### Multi-patch series
+
+```shell
+git gowork Bug533
+git commit -m "Bug 533: add information about alias help"
+git commit -m "Bug 533: add info about dry runs for rbt commands"
+
+# Preview the rbt commands
+git gorbt -p -d -U kostik
+
+# Post for real
+git gorbt -p -U kostik
+```
+
+### Syncing a modified series
+
+After posting a multi-patch series, you amend/reorder/add/drop commits
+and want to update ReviewBoard to match:
+
+```shell
+# See what changed
+git gg rbt-sync -d
+
+# Edit the plan before executing (skip a discard, defer a create, etc.)
+git gg rbt-sync -i
+
+# Or just execute the plan directly
+git gg rbt-sync
+```
+
+### Importing an existing ReviewBoard chain
+
+If you already have reviews posted outside of git-helpers:
+
+```shell
+git gg rbt-import <review-id>
+```
+
+This walks the dependency chain and saves state to `reviews.db` so that
+`rbt-sync` can manage the series going forward.
+
+### Upstream branches
+
+Sometimes you need your branch upstream (backup, collaboration):
+
+```shell
 git gowork foo
+# ... work ...
 
-...
-```
-
-Now you think you need this branch upstream, may be your friend asks you to
-pull from it or you want to backup.
-
-```
+# First push -- creates user/<UID>/foo on origin
 git gopublish --initial
-```
 
-will push your branch to `user/<UID>/foo`. If you want to push more changes:
-
-```
+# Subsequent pushes
 git gopublish
-```
 
-will do it or if you did a rebase:
-
-```
+# After a rebase
 git gopublish -f
 ```
 
-Now you have a problem, cause your branch tracks origin/user/kostik/foo, not
-master. So if you do: `git gorbt` it will compare against your branch in
-origin. Sometimes it's OK, but if you want to post all changes since master
-for review:
+When the branch tracks origin/user/... instead of master, specify the
+range explicitly for review:
 
-```
+```shell
 git gorbt master..foo
 ```
 
-comes to help. It checks revisions between master and your branch. When you
-want to push things back to master:
+Push back to master when done:
 
-```
+```shell
 git gopush -t master
 ```
 
-will push your branch to `origin/master`. Note, that you need to pull those
-changes from your local master.
-
-Issues solving
---------------
-
-### Forgot to branch ###
-
-You did:
+### Forgot to branch
 
 ```shell
 git checkout master
-# work
+# ... work ...
 git commit -m "bug239: cool fix"
 # oh, forgot to branch!
-```
 
-What we do is:
-
-```shell
-# Branch
 git gowork bug239
-
-# Move master back
 git checkout master
 git reset --keep HEAD~1
-
-# Return to branch and work
 git checkout bug239
 ```
 
@@ -241,16 +202,14 @@ Running tests
 uv run pytest tests/ -v
 ```
 
-Changes
--------
+Contributing
+------------
 
-All changes should be done via reviewboard with at least `git-helpers` group
-set as reviewers. Project for rbt - ol-git-helpers.
+All changes should be done via ReviewBoard with at least `git-helpers` group
+set as reviewers. Project for rbt -- ol-git-helpers.
 
 You MUST get at least **two** acks from **kostik/osadakov** if
-you're not one of them in which case one is enough.
+you're not one of them, in which case one is enough.
 
 If you're leading a project that uses git-helpers you **should** mail
-<kushakov@oktet.co.il> and get yourself into `git-helpers` list.
-And you're welcome to do so if you want to be involved in review or be
-notified about changes should they happen.
+<kushakov@oktet.co.il> and get yourself into the `git-helpers` list.
