@@ -1,7 +1,10 @@
 """Tests for gg rbt-sync -- series reconciliation with ReviewBoard."""
 
+import os
 import re
 import subprocess
+import sys
+import textwrap
 
 from tests.conftest import GitRepo, RbtMock
 
@@ -333,3 +336,80 @@ class TestSyncState:
         # All three should now be keep (no changes since last sync)
         lines = [l for l in out.splitlines() if "keep" in l]
         assert len(lines) == 3
+
+
+def _make_editor_script(tmp_path, sed_expr: str) -> str:
+    """Create a script that applies a sed expression to the file argument."""
+    script = tmp_path / "fake_editor.sh"
+    script.write_text(f"#!/bin/sh\nsed -i '{sed_expr}' \"$1\"\n")
+    script.chmod(0o755)
+    return str(script)
+
+
+def _make_clear_editor(tmp_path) -> str:
+    """Create a script that empties the file (abort)."""
+    script = tmp_path / "clear_editor.sh"
+    script.write_text("#!/bin/sh\n: > \"$1\"\n")
+    script.chmod(0o755)
+    return str(script)
+
+
+class TestInteractiveMode:
+    def test_interactive_skip_discard(
+        self, git_repo: GitRepo, rbt_mock: RbtMock, tmp_path,
+    ) -> None:
+        """Editor changes 'discard' to 'skip', review is not closed."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("to be dropped")
+        _post_series(git_repo)
+        initial_calls = rbt_mock.call_count()
+
+        # Drop last commit so it shows as discard
+        git_repo.git("reset", "--hard", "HEAD~1")
+
+        editor = _make_editor_script(tmp_path, "s/^discard/skip   /")
+        git_repo._env["EDITOR"] = editor
+        # Unset VISUAL so EDITOR is used
+        git_repo._env.pop("VISUAL", None)
+
+        r = git_repo.run_gg("rbt-sync", "-i")
+        assert r.returncode == 0
+
+        # No close calls should have happened
+        all_calls = rbt_mock.calls()
+        new_calls = all_calls[initial_calls:]
+        has_close = any("close" in c for c in new_calls)
+        assert not has_close
+
+        # The skipped entry should be preserved -- next dry-run should
+        # still show it as discard
+        r2 = git_repo.run_gg("rbt-sync", "-d")
+        assert r2.returncode == 0
+        assert "discard" in r2.stdout
+
+    def test_interactive_abort(
+        self, git_repo: GitRepo, rbt_mock: RbtMock, tmp_path,
+    ) -> None:
+        """Editor empties file, sync aborts with no execution."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+        initial_calls = rbt_mock.call_count()
+
+        # Amend so there's something to sync
+        (git_repo.work_dir / "extra").write_text("changed\n")
+        git_repo.git("add", "extra")
+        git_repo.git("commit", "--amend", "--no-edit")
+
+        editor = _make_clear_editor(tmp_path)
+        git_repo._env["EDITOR"] = editor
+        git_repo._env.pop("VISUAL", None)
+
+        r = git_repo.run_gg("rbt-sync", "-i")
+        assert r.returncode == 0
+        assert "Aborted" in r.stdout
+
+        # No new rbt calls
+        assert rbt_mock.call_count() == initial_calls

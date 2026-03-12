@@ -11,6 +11,7 @@ from gg.matcher import ActionKind, NewCommit, SyncAction, reconcile
 from gg.numbering import assign_numbers
 from gg.rbt_close import close_discarded
 from gg.rbt_post import post_one
+from gg.sync_edit import edit_plan
 from gg.sync_plan import format_plan
 
 _BOLD = "\033[1m"
@@ -21,6 +22,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     """Register the rbt-sync subcommand."""
     p = subparsers.add_parser("rbt-sync", help="reconcile commit series with ReviewBoard")
     p.add_argument("-d", "--dry", action="store_true", help="plan only, don't execute")
+    p.add_argument("-i", "--interactive", action="store_true", help="edit plan before executing")
     p.add_argument("--renumber", action="store_true", help="full renumber instead of fractional")
     p.add_argument("-p", "--publish", action="store_true", help="publish new/updated requests")
     p.add_argument("-v", "--verbose", action="store_true", help="show rbt output")
@@ -75,7 +77,7 @@ def _execute(
     prev_review_id = initial_depends
 
     for action, num_str in numbered:
-        if action.kind == ActionKind.DISCARD:
+        if action.kind in (ActionKind.DISCARD, ActionKind.SKIP):
             continue
 
         assert action.new_commit is not None
@@ -156,8 +158,10 @@ def _format_summary(actions: list[SyncAction]) -> str:
             counts["created"] = counts.get("created", 0) + 1
         elif a.kind == ActionKind.DISCARD:
             counts["discarded"] = counts.get("discarded", 0) + 1
+        elif a.kind == ActionKind.SKIP:
+            counts["skipped"] = counts.get("skipped", 0) + 1
     parts = []
-    for key in ("kept", "updated", "created", "discarded"):
+    for key in ("kept", "updated", "created", "discarded", "skipped"):
         if key in counts:
             parts.append(f"{counts[key]} {key}")
     return "Synced: " + ", ".join(parts)
@@ -184,6 +188,13 @@ def run(args: argparse.Namespace) -> int:
     new = _build_new_commits(revs, cwd=cwd)
     actions = reconcile(old, new)
 
+    if args.interactive:
+        edited = edit_plan(actions, renumber=args.renumber)
+        if edited is None:
+            print("Aborted.")
+            return 0
+        actions = edited
+
     # Show plan
     plan = format_plan(actions, renumber=args.renumber, publish=args.publish)
     print(plan)
@@ -204,6 +215,17 @@ def run(args: argparse.Namespace) -> int:
         initial_depends=args.depends_on,
         cwd=cwd,
     )
+
+    # Preserve skipped-discard entries so they reappear next sync
+    for a in actions:
+        if a.kind == ActionKind.SKIP and a.old_entry and not a.new_commit:
+            entries.append(review_store.ReviewEntry(
+                branch=branch_name,
+                position=len(entries) + 1,
+                review_id=a.old_entry.review_id,
+                subject=a.old_entry.subject,
+                diff_hash=a.old_entry.diff_hash,
+            ))
 
     print(_format_summary(actions), file=sys.stderr)
 

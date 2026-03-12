@@ -34,9 +34,15 @@ def format_plan(
 
     for action, num_str in numbered:
         kind_label = action.kind.value
-        if action.kind == ActionKind.DISCARD:
-            review = f"r/{action.old_entry.review_id}" if action.old_entry else "--"
-            subject = action.old_entry.subject if action.old_entry else ""
+        if action.kind in (ActionKind.DISCARD, ActionKind.SKIP):
+            if action.new_commit:
+                # Skipped create: show commit subject
+                review = "--"
+                subject = action.new_commit.subject
+            else:
+                # Discard or skipped discard: show old entry
+                review = f"r/{action.old_entry.review_id}" if action.old_entry else "--"
+                subject = action.old_entry.subject if action.old_entry else ""
         else:
             review = f"r/{action.old_entry.review_id}" if action.old_entry else "--"
             subject = action.new_commit.subject if action.new_commit else ""

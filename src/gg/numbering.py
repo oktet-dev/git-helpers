@@ -18,8 +18,9 @@ def assign_numbers(
 
     --renumber: plain [1/N]..[N/N].
     """
-    non_discard = [a for a in actions if a.kind != ActionKind.DISCARD]
-    discards = [a for a in actions if a.kind == ActionKind.DISCARD]
+    excluded = (ActionKind.DISCARD, ActionKind.SKIP)
+    non_discard = [a for a in actions if a.kind not in excluded]
+    discards = [a for a in actions if a.kind in excluded]
     total = len(non_discard)
 
     if renumber:

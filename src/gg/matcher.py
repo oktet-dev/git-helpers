@@ -19,6 +19,7 @@ class ActionKind(Enum):
     KEEP_DEP = "keep+dep"
     CREATE = "create"
     DISCARD = "discard"
+    SKIP = "skip"
 
 
 @dataclass
