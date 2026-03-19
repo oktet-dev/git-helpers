@@ -449,3 +449,106 @@ class TestInteractiveMode:
 
         # No new rbt calls
         assert rbt_mock.call_count() == initial_calls
+
+
+class TestExplicitReviewers:
+    def test_users_override_inheritance(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """-U overrides reviewer inheritance from depends-on."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.run_gg("rbt", "-U", "alice")
+
+        git_repo.commit("new feature")
+        r = git_repo.run_gg("rbt-sync", "-U", "bob")
+        assert r.returncode == 0
+
+        calls = rbt_mock.calls()
+        post_calls = [c for c in calls if c and c[0] == "post"]
+        last_post = post_calls[-1]
+        assert "--target-people" in last_post
+        assert "bob" in last_post
+        # Should NOT have alice (inherited) — bob overrides
+        assert "alice" not in last_post
+
+    def test_groups_override(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """-G overrides group inheritance."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.run_gg("rbt", "-G", "team-a")
+
+        git_repo.commit("new feature")
+        r = git_repo.run_gg("rbt-sync", "-G", "team-b")
+        assert r.returncode == 0
+
+        calls = rbt_mock.calls()
+        post_calls = [c for c in calls if c and c[0] == "post"]
+        last_post = post_calls[-1]
+        assert "--target-groups" in last_post
+        assert "team-b" in last_post
+        assert "team-a" not in last_post
+
+    def test_reviewers_shown_in_plan(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """Plan output includes reviewer/group header."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+
+        r = git_repo.run_gg("rbt-sync", "-d", "-U", "alice", "-G", "devteam")
+        assert r.returncode == 0
+        assert "Reviewers: alice" in r.stdout
+        assert "Groups: devteam" in r.stdout
+
+
+class TestNoNumbers:
+    def test_no_numbers_suppresses_prefix(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """--no-numbers prevents [i/N] prefix on posted reviews."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+
+        # Amend to trigger update
+        (git_repo.work_dir / "extra").write_text("changed\n")
+        git_repo.git("add", "extra")
+        git_repo.git("commit", "--amend", "--no-edit")
+
+        r = git_repo.run_gg("rbt-sync", "--no-numbers")
+        assert r.returncode == 0
+
+        calls = rbt_mock.calls()
+        post_calls = [c for c in calls if c and c[0] == "post"]
+        last_post = post_calls[-1]
+        # The summary should not start with [N/M]:
+        summary_args = [a for a in last_post if a.startswith("--summary=")]
+        assert summary_args
+        summary = summary_args[0].split("=", 1)[1]
+        assert not summary.startswith("[")
+
+    def test_no_numbers_on_create(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """--no-numbers also works for newly created reviews."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        _post_series(git_repo)
+
+        git_repo.commit("new feature")
+        r = git_repo.run_gg("rbt-sync", "--no-numbers")
+        assert r.returncode == 0
+
+        calls = rbt_mock.calls()
+        post_calls = [c for c in calls if c and c[0] == "post"]
+        last_post = post_calls[-1]
+        summary_args = [a for a in last_post if a.startswith("--summary=")]
+        assert summary_args
+        summary = summary_args[0].split("=", 1)[1]
+        assert not summary.startswith("[")

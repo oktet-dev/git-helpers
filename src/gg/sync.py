@@ -30,6 +30,9 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
         "-D", "--depends-on", default=None, metavar="ID",
         help="first patch depends on this review request ID",
     )
+    p.add_argument("-U", "--users", action="append", default=[], help="reviewer (--target-people)")
+    p.add_argument("-G", "--groups", action="append", default=[], help="review group (--target-groups)")
+    p.add_argument("-n", "--no-numbers", action="store_true", help="don't number the patches")
     p.add_argument("-b", "--branch", default=None, help="explicit --branch for new reviews")
     p.add_argument("range", nargs="?", default=None, help="revision range (default: tracking..HEAD)")
     p.set_defaults(func=run)
@@ -62,6 +65,9 @@ def _execute(
     dry_run: bool,
     explicit_branch: str | None,
     initial_depends: str | None,
+    reviewers: list[str] | None = None,
+    groups: list[str] | None = None,
+    no_numbers: bool = False,
     cwd: Path,
 ) -> list[review_store.ReviewEntry]:
     """Execute sync actions and return updated review entries.
@@ -88,7 +94,10 @@ def _execute(
             continue
 
         assert action.new_commit is not None
-        num_prefix = f"{num_str}: " if num_str != "--" else ""
+        if no_numbers:
+            num_prefix = ""
+        else:
+            num_prefix = f"{num_str}: " if num_str != "--" else ""
 
         if (action.kind == ActionKind.KEEP
                 and not action.needs_dep_update
@@ -107,21 +116,23 @@ def _execute(
             continue
 
         if action.kind == ActionKind.CREATE:
-            # Inherit reviewers from the depends-on review
-            reviewers: list[str] = []
-            groups: list[str] = []
-            if prev_review_id:
-                reviewers, groups = rb_api.fetch_reviewers(
+            if reviewers is not None or groups is not None:
+                create_reviewers = reviewers or []
+                create_groups = groups or []
+            elif prev_review_id:
+                create_reviewers, create_groups = rb_api.fetch_reviewers(
                     prev_review_id, cwd=cwd,
                 )
+            else:
+                create_reviewers, create_groups = [], []
             result = post_one(
                 action.new_commit.rev, tracking,
                 first_post=True,
                 publish=publish,
                 dry_run=dry_run,
                 verbose=verbose,
-                reviewers=reviewers,
-                groups=groups,
+                reviewers=create_reviewers,
+                groups=create_groups,
                 explicit_branch=explicit_branch,
                 num_string=num_prefix,
                 depends_on=prev_review_id,
@@ -206,7 +217,10 @@ def run(args: argparse.Namespace) -> int:
         actions = edited
 
     # Show plan
-    plan = format_plan(actions, renumber=args.renumber, publish=args.publish)
+    plan = format_plan(
+        actions, renumber=args.renumber, publish=args.publish,
+        reviewers=args.users, groups=args.groups,
+    )
     print(plan)
 
     if args.dry:
@@ -223,6 +237,9 @@ def run(args: argparse.Namespace) -> int:
         dry_run=False,
         explicit_branch=args.branch,
         initial_depends=args.depends_on,
+        reviewers=args.users or None,
+        groups=args.groups or None,
+        no_numbers=args.no_numbers,
         cwd=cwd,
     )
 
