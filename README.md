@@ -56,6 +56,8 @@ operations support `-d`/`--dry` for dry-run.
 | `git gg rbt` | Post commit series to ReviewBoard |
 | `git gg rbt-sync` | Reconcile series with ReviewBoard (keep/update/create/discard) |
 | `git gg rbt-sync -i` | Interactive mode -- edit the sync plan in `$EDITOR` before executing |
+| `git gg rbt-sync -U alice -G devteam` | Override reviewers/groups for new reviews |
+| `git gg rbt-sync --no-numbers` | Suppress `[i/N]:` prefix on posted reviews |
 | `git gg rbt-import` | Import an existing ReviewBoard chain into `reviews.db` |
 | `git gg db` | Inspect and manage `.gg/reviews.db` (list/clear/reinit) |
 
@@ -137,6 +139,12 @@ git gg rbt-sync -i
 
 # Or just execute the plan directly
 git gg rbt-sync
+
+# Override reviewers/groups for any newly created reviews
+git gg rbt-sync -U alice -G devteam
+
+# Suppress [i/N]: numbering prefix
+git gg rbt-sync --no-numbers
 ```
 
 ### Importing an existing ReviewBoard chain
@@ -147,8 +155,9 @@ If you already have reviews posted outside of git-helpers:
 git gg rbt-import <review-id>
 ```
 
-This walks the dependency chain and saves state to `reviews.db` so that
-`rbt-sync` can manage the series going forward.
+This walks the dependency chain, displays the reviewers/groups from the
+first review, and saves state to `reviews.db` so that `rbt-sync` can
+manage the series going forward.
 
 ### Upstream branches
 
