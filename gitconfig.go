@@ -20,6 +20,7 @@
 
 	gopr = "!source ~/.bashrc.gitgo; git_gopr"
 	gorbt = "!PATH=$HOME/.local/bin:$PATH; gg rbt"
+	rbt = "!PATH=$HOME/.local/bin:$PATH; gg rbt-sync"
 	gg = "!PATH=$HOME/.local/bin:$PATH; gg"
 
         gopublish =  "!. ~/.bashrc.gitgo; git_gopublish"
