@@ -8,7 +8,14 @@ import pytest
 
 from gg.matcher import ActionKind, NewCommit, SyncAction
 from gg.review_store import ReviewEntry
-from gg.sync_edit import get_editor, parse_plan, serialize_plan
+from gg.sync_edit import (
+    _ACTION_KEYS,
+    _build_editor_cmd,
+    _make_header,
+    get_editor,
+    parse_plan,
+    serialize_plan,
+)
 
 
 def _entry(rid: str, pos: int, subject: str = "test") -> ReviewEntry:
@@ -213,3 +220,119 @@ class TestGetEditor:
         self._patch_which(monkeypatch, set())
         with pytest.raises(RuntimeError, match="no editor found"):
             get_editor()
+
+
+class TestBuildEditorCmd:
+    def test_vim_gets_c_flags(self) -> None:
+        cmd = _build_editor_cmd("vim", "/tmp/plan.txt")
+        c_flags = [i for i, arg in enumerate(cmd) if arg == "-c"]
+        assert len(c_flags) == len(_ACTION_KEYS)
+
+    def test_vim_mapping_strings(self) -> None:
+        cmd = _build_editor_cmd("vim", "/tmp/plan.txt")
+        for action, key in _ACTION_KEYS:
+            assert any(f"g{key}" in arg and action in arg for arg in cmd)
+
+    def test_vim_filepath_last(self) -> None:
+        cmd = _build_editor_cmd("vim", "/tmp/plan.txt")
+        assert cmd[-1] == "/tmp/plan.txt"
+
+    def test_nvim_detected(self) -> None:
+        cmd = _build_editor_cmd("nvim", "/tmp/plan.txt")
+        c_flags = [arg for arg in cmd if arg == "-c"]
+        assert len(c_flags) == len(_ACTION_KEYS)
+
+    def test_absolute_path_vim(self) -> None:
+        cmd = _build_editor_cmd("/usr/bin/vim", "/tmp/plan.txt")
+        c_flags = [arg for arg in cmd if arg == "-c"]
+        assert len(c_flags) == len(_ACTION_KEYS)
+        assert cmd[0] == "/usr/bin/vim"
+
+    def test_emacs_gets_eval_after_filepath(self) -> None:
+        cmd = _build_editor_cmd("emacs", "/tmp/plan.txt")
+        fp_idx = cmd.index("/tmp/plan.txt")
+        eval_idx = cmd.index("--eval")
+        assert eval_idx > fp_idx
+
+    def test_emacs_bindings_contain_keys(self) -> None:
+        cmd = _build_editor_cmd("emacs", "/tmp/plan.txt")
+        eval_arg = cmd[cmd.index("--eval") + 1]
+        for action, key in _ACTION_KEYS:
+            assert f"C-c {key}" in eval_arg
+            assert action in eval_arg
+
+    def test_absolute_path_emacs(self) -> None:
+        cmd = _build_editor_cmd("/usr/bin/emacs", "/tmp/plan.txt")
+        assert "--eval" in cmd
+        assert cmd[0] == "/usr/bin/emacs"
+
+    def test_unknown_editor_passthrough(self) -> None:
+        cmd = _build_editor_cmd("nano", "/tmp/plan.txt")
+        assert cmd == ["nano", "/tmp/plan.txt"]
+
+    def test_unknown_absolute_path_passthrough(self) -> None:
+        cmd = _build_editor_cmd("/usr/bin/nano", "/tmp/plan.txt")
+        assert cmd == ["/usr/bin/nano", "/tmp/plan.txt"]
+
+
+class TestMakeHeader:
+    def test_vim_header_has_shortcuts(self) -> None:
+        header = _make_header("vim")
+        assert "Shortcuts (vim):" in header
+        assert "gu=update" in header
+        assert "gk=keep" in header
+
+    def test_emacs_header_has_shortcuts(self) -> None:
+        header = _make_header("emacs")
+        assert "Shortcuts (emacs):" in header
+        assert "C-c u=update" in header
+        assert "C-c k=keep" in header
+
+    def test_unknown_editor_no_shortcut_line(self) -> None:
+        header = _make_header("nano")
+        assert "Shortcuts" not in header
+
+    def test_empty_editor_no_shortcut_line(self) -> None:
+        header = _make_header("")
+        assert "Shortcuts" not in header
+
+    def test_all_headers_contain_valid_actions(self) -> None:
+        for editor in ("vim", "emacs", "nano", ""):
+            header = _make_header(editor)
+            assert "Valid actions" in header
+
+    def test_absolute_path_vim(self) -> None:
+        header = _make_header("/usr/local/bin/nvim")
+        assert "Shortcuts (vim):" in header
+
+
+class TestSerializeWithEditor:
+    def test_roundtrip_with_vim(self) -> None:
+        actions = [
+            _action(ActionKind.KEEP, rid="1000", rev="a1", pos=1, subject="fix"),
+            _action(ActionKind.UPDATE, rid="1001", rev="a2", pos=2, subject="add"),
+        ]
+        text = serialize_plan(actions, renumber=True, editor="vim")
+        result = parse_plan(text, actions)
+        assert result is not None
+        assert len(result) == len(actions)
+        for orig, parsed in zip(actions, result):
+            assert parsed.kind == orig.kind
+
+    def test_roundtrip_with_emacs(self) -> None:
+        actions = [
+            _action(ActionKind.CREATE, rev="a1", pos=1, subject="new"),
+        ]
+        text = serialize_plan(actions, renumber=True, editor="emacs")
+        result = parse_plan(text, actions)
+        assert result is not None
+        assert result[0].kind == ActionKind.CREATE
+
+    def test_no_editor_backward_compat(self) -> None:
+        actions = [
+            _action(ActionKind.KEEP, rid="1000", rev="a1", pos=1, subject="fix"),
+        ]
+        text = serialize_plan(actions, renumber=True)
+        result = parse_plan(text, actions)
+        assert result is not None
+        assert result[0].kind == ActionKind.KEEP

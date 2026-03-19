@@ -10,7 +10,18 @@ import tempfile
 from gg.matcher import ActionKind, SyncAction
 from gg.numbering import assign_numbers
 
-_HEADER = """\
+_ACTION_KEYS: list[tuple[str, str]] = [
+    ("update", "u"),
+    ("keep", "k"),
+    ("skip", "s"),
+    ("create", "c"),
+    ("discard", "d"),
+]
+
+_VIM_NAMES = frozenset({"vi", "vim", "nvim", "gvim", "mvim"})
+_EMACS_NAMES = frozenset({"emacs", "emacs-nox", "xemacs", "emacsclient"})
+
+_BASE_HEADER = """\
 # gg rbt-sync -- edit the Action column, then save and quit.
 # Empty file = abort. Lines starting with # are ignored.
 #
@@ -22,6 +33,23 @@ _HEADER = """\
 #   keep    -> update   force re-post even if diff is unchanged
 """
 
+
+def _make_header(editor: str = "") -> str:
+    """Return the plan header, optionally with editor-specific shortcut hints."""
+    base_name = os.path.basename(editor)
+    if base_name in _VIM_NAMES:
+        shortcuts = "  ".join(f"g{key}={action}" for action, key in _ACTION_KEYS)
+        return _BASE_HEADER + f"# Shortcuts (vim): {shortcuts}\n"
+    if base_name in _EMACS_NAMES:
+        shortcuts = "  ".join(
+            f"C-c {key}={action}" for action, key in _ACTION_KEYS
+        )
+        return _BASE_HEADER + f"# Shortcuts (emacs): {shortcuts}\n"
+    return _BASE_HEADER
+
+
+_HEADER = _make_header("")
+
 # Which transitions are allowed from each action kind
 _VALID_TRANSITIONS: dict[ActionKind, set[ActionKind]] = {
     ActionKind.KEEP: {ActionKind.KEEP, ActionKind.UPDATE},
@@ -30,6 +58,33 @@ _VALID_TRANSITIONS: dict[ActionKind, set[ActionKind]] = {
     ActionKind.CREATE: {ActionKind.CREATE, ActionKind.SKIP},
     ActionKind.DISCARD: {ActionKind.DISCARD, ActionKind.SKIP},
 }
+
+
+def _build_editor_cmd(editor: str, filepath: str) -> list[str]:
+    """Build editor command with editor-specific keybindings injected."""
+    base_name = os.path.basename(editor)
+    if base_name in _VIM_NAMES:
+        cmd = [editor]
+        for action, key in _ACTION_KEYS:
+            cmd.extend([
+                "-c",
+                f"nnoremap <buffer> g{key}"
+                f" :s/^\\S\\+/{action:<11}/<CR>0",
+            ])
+        cmd.append(filepath)
+        return cmd
+    if base_name in _EMACS_NAMES:
+        padded = {a: f"{a:<11}" for a, _ in _ACTION_KEYS}
+        bindings = " ".join(
+            f'(local-set-key (kbd "C-c {key}")'
+            f" (lambda () (interactive)"
+            f" (beginning-of-line)"
+            f' (re-search-forward "\\\\S+" (line-end-position) t)'
+            f' (replace-match "{padded[action]}")))'
+            for action, key in _ACTION_KEYS
+        )
+        return [editor, filepath, "--eval", f"(progn {bindings})"]
+    return [editor, filepath]
 
 
 def get_editor() -> str:
@@ -42,10 +97,12 @@ def get_editor() -> str:
     )
 
 
-def serialize_plan(actions: list[SyncAction], *, renumber: bool = False) -> str:
+def serialize_plan(
+    actions: list[SyncAction], *, renumber: bool = False, editor: str = "",
+) -> str:
     """Format actions as editable text."""
     numbered = assign_numbers(actions, renumber=renumber)
-    lines = [_HEADER]
+    lines = [_make_header(editor)]
 
     for action, num_str in numbered:
         kind_label = action.kind.value
@@ -129,8 +186,8 @@ def edit_plan(
     Returns modified actions, or None if the user aborted (empty file).
     Raises ValueError on parse errors.
     """
-    text = serialize_plan(actions, renumber=renumber)
     editor = get_editor()
+    text = serialize_plan(actions, renumber=renumber, editor=editor)
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".gg-sync", prefix="rbt-sync-", delete=False,
@@ -139,7 +196,7 @@ def edit_plan(
         tmpfile = f.name
 
     try:
-        subprocess.run([editor, tmpfile], check=True)
+        subprocess.run(_build_editor_cmd(editor, tmpfile), check=True)
         edited = open(tmpfile).read()
     finally:
         os.unlink(tmpfile)
