@@ -6,11 +6,12 @@ from gg.review_store import ReviewEntry
 
 
 def _keep(pos: int, rid: str, subject: str) -> SyncAction:
+    """Create a KEEP action. *pos* is 1-based, matching production storage."""
     return SyncAction(
         kind=ActionKind.KEEP,
         old_entry=ReviewEntry("b", pos, rid, subject, "h"),
         new_commit=NewCommit(rev="abc", subject=subject, diff_hash="h"),
-        new_position=pos + 1,
+        new_position=pos,
     )
 
 
@@ -24,6 +25,7 @@ def _create(subject: str) -> SyncAction:
 
 
 def _discard(pos: int, rid: str, subject: str) -> SyncAction:
+    """Create a DISCARD action. *pos* is 1-based."""
     return SyncAction(
         kind=ActionKind.DISCARD,
         old_entry=ReviewEntry("b", pos, rid, subject, "h"),
@@ -34,19 +36,19 @@ def _discard(pos: int, rid: str, subject: str) -> SyncAction:
 
 class TestRenumber:
     def test_simple_renumber(self) -> None:
-        actions = [_keep(0, "100", "first"), _keep(1, "101", "second")]
+        actions = [_keep(1, "100", "first"), _keep(2, "101", "second")]
         result = assign_numbers(actions, renumber=True)
         assert result[0][1] == "[1/2]"
         assert result[1][1] == "[2/2]"
 
     def test_discards_get_dashes(self) -> None:
-        actions = [_keep(0, "100", "first"), _discard(1, "101", "dropped")]
+        actions = [_keep(1, "100", "first"), _discard(2, "101", "dropped")]
         result = assign_numbers(actions, renumber=True)
         assert result[0][1] == "[1/1]"
         assert result[1][1] == "--"
 
     def test_create_included_in_total(self) -> None:
-        actions = [_keep(0, "100", "first"), _create("new")]
+        actions = [_keep(1, "100", "first"), _create("new")]
         result = assign_numbers(actions, renumber=True)
         assert result[0][1] == "[1/2]"
         assert result[1][1] == "[2/2]"
@@ -54,14 +56,14 @@ class TestRenumber:
 
 class TestFractional:
     def test_matched_keep_original_position(self) -> None:
-        actions = [_keep(0, "100", "first"), _keep(1, "101", "second")]
+        actions = [_keep(1, "100", "first"), _keep(2, "101", "second")]
         result = assign_numbers(actions, renumber=False)
         # Position 0 -> display "1", position 1 -> display "2"
         assert result[0][1] == "[1/2]"
         assert result[1][1] == "[2/2]"
 
     def test_insert_gets_fractional(self) -> None:
-        actions = [_keep(0, "100", "first"), _create("inserted"), _keep(1, "101", "second")]
+        actions = [_keep(1, "100", "first"), _create("inserted"), _keep(2, "101", "second")]
         result = assign_numbers(actions, renumber=False)
         assert len(result) == 3
         # First keeps position 1

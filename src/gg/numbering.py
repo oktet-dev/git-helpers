@@ -37,7 +37,7 @@ def assign_numbers(
     # First pass: assign integer positions to matched commits
     for i, action in enumerate(non_discard):
         if action.old_entry is not None:
-            labels[i] = str(action.old_entry.position + 1)
+            labels[i] = str(action.old_entry.position)
 
     # Second pass: fractional positions for inserts *between* matched commits
     for i, action in enumerate(non_discard):
@@ -53,7 +53,7 @@ def assign_numbers(
         prev_int = 0
         for j in range(i - 1, -1, -1):
             if non_discard[j].old_entry is not None:
-                prev_int = non_discard[j].old_entry.position + 1
+                prev_int = non_discard[j].old_entry.position
                 break
         # Count consecutive inserts after prev_int
         frac_idx = 0
@@ -62,13 +62,13 @@ def assign_numbers(
                 break
             if j <= i:
                 frac_idx += 1
-        labels[i] = f"{prev_int + 1}.{frac_idx}" if prev_int > 0 else f"0.{frac_idx}"
+        labels[i] = f"{prev_int}.{frac_idx}" if prev_int > 0 else f"0.{frac_idx}"
 
     # Third pass: integer positions for appends after all matched commits
     next_int = 0
     for i in range(len(non_discard) - 1, -1, -1):
         if non_discard[i].old_entry is not None:
-            next_int = non_discard[i].old_entry.position + 2
+            next_int = non_discard[i].old_entry.position + 1
             break
     for i, action in enumerate(non_discard):
         if labels[i] is None:
