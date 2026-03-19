@@ -24,11 +24,15 @@ def _write_api_mock(rbt_mock: RbtMock, reviews: dict[str, dict]) -> None:
             {"href": f"https://rb.example.com/api/review-requests/{b}/", "method": "GET"}
             for b in info.get("blocks", [])
         ]
+        target_people = [{"title": p} for p in info.get("target_people", [])]
+        target_groups = [{"title": g} for g in info.get("target_groups", [])]
         resp = json.dumps({
             "review_request": {
                 "id": int(rid),
                 "summary": info["summary"],
                 "blocks": blocks,
+                "target_people": target_people,
+                "target_groups": target_groups,
             }
         })
         api_cases += f'    */review-requests/{rid}/*)\n'
@@ -288,3 +292,44 @@ class TestImport:
         # Only 1 entry
         lines = [l for l in r.stdout.splitlines() if "r/950" in l]
         assert len(lines) == 1
+
+
+class TestImportReviewers:
+    def test_import_shows_reviewers(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """Import output includes reviewers from the first review."""
+        _write_api_mock(rbt_mock, {
+            "960": {
+                "summary": "fix crash",
+                "blocks": ["961"],
+                "target_people": ["alice", "bob"],
+                "target_groups": ["devteam"],
+            },
+            "961": {"summary": "add tests", "blocks": []},
+        })
+
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+
+        r = git_repo.run_gg("rbt-import", "-d", "960")
+        assert r.returncode == 0
+        assert "Reviewers: alice, bob" in r.stdout
+        assert "Groups: devteam" in r.stdout
+
+    def test_import_no_reviewers_no_header(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """Import without reviewers omits the header."""
+        _write_api_mock(rbt_mock, {
+            "970": {"summary": "fix crash", "blocks": []},
+        })
+
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+
+        r = git_repo.run_gg("rbt-import", "-d", "970")
+        assert r.returncode == 0
+        assert "Reviewers" not in r.stdout
+        assert "Groups" not in r.stdout

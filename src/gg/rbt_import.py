@@ -24,10 +24,20 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
 def _format_table(
     entries: list[review_store.ReviewEntry],
     skipped: list[tuple[str, str]],
+    *,
+    reviewers: list[str] | None = None,
+    groups: list[str] | None = None,
 ) -> str:
     """Format review entries and skipped commits as a table."""
+    lines: list[str] = []
+    if reviewers:
+        lines.append(f"Reviewers: {', '.join(reviewers)}")
+    if groups:
+        lines.append(f"Groups: {', '.join(groups)}")
+    if lines:
+        lines.append("")
     header = f"{'#':<6} {'Review':<10} Subject"
-    lines = [header, "-" * len(header)]
+    lines.extend([header, "-" * len(header)])
     for e in entries:
         lines.append(f"{e.position:<6} r/{e.review_id:<7} {e.subject}")
     if skipped:
@@ -96,7 +106,8 @@ def run(args: argparse.Namespace) -> int:
         print("No commits in range.")
         return 1
 
-    chain = rb_api.follow_chain(args.first_review_id, cwd=cwd)
+    result = rb_api.follow_chain(args.first_review_id, cwd=cwd)
+    chain = result.chain
     matched, skipped = _match_by_subject(revs, chain, cwd=cwd)
 
     # Check for existing entries and warn
@@ -119,7 +130,10 @@ def run(args: argparse.Namespace) -> int:
             diff_hash=h,
         ))
 
-    print(_format_table(entries, skipped))
+    print(_format_table(
+        entries, skipped,
+        reviewers=result.reviewers, groups=result.groups,
+    ))
 
     if args.dry:
         return 0
