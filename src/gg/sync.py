@@ -35,6 +35,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p.set_defaults(func=run)
 
 
+def _number_matches(old_entry: review_store.ReviewEntry, num_str: str, old_total: int) -> bool:
+    """True when the old review already has the correct number prefix."""
+    old_num_str = f"[{old_entry.position}/{old_total}]"
+    return old_num_str == num_str
+
+
 def _build_new_commits(revs: list[str], *, cwd: Path) -> list[NewCommit]:
     """Build NewCommit list from revision hashes."""
     commits = []
@@ -63,6 +69,7 @@ def _execute(
     On partial failure, returns entries for completed actions.
     """
     numbered = assign_numbers(actions, renumber=renumber)
+    old_total = sum(1 for a, _ in numbered if a.old_entry is not None)
 
     # Phase 1: discard removed reviews
     for action, _ in numbered:
@@ -83,7 +90,10 @@ def _execute(
         assert action.new_commit is not None
         num_prefix = f"{num_str}: " if num_str != "--" else ""
 
-        if action.kind == ActionKind.KEEP and not action.needs_dep_update:
+        if (action.kind == ActionKind.KEEP
+                and not action.needs_dep_update
+                and (not renumber
+                     or _number_matches(action.old_entry, num_str, old_total))):
             # Nothing changed, preserve existing entry
             assert action.old_entry is not None
             entries.append(review_store.ReviewEntry(

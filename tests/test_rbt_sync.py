@@ -189,6 +189,42 @@ class TestSyncExecution:
         assert new_calls >= 1
 
 
+    def test_renumber_reposts_stale_prefix(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """--renumber re-posts kept reviews whose [i/N] prefix changed."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+        initial_calls = rbt_mock.call_count()
+
+        # Add a third commit — old series was [1/2],[2/2], new is [1/3]..[3/3]
+        git_repo.commit("new feature")
+
+        r = git_repo.run_gg("rbt-sync", "--renumber")
+        assert r.returncode == 0
+        all_calls = rbt_mock.calls()[initial_calls:]
+        post_calls = [c for c in all_calls if c and c[0] == "post"]
+        # 2 re-posts (stale prefix) + 1 create = 3 rbt post calls
+        assert len(post_calls) == 3
+
+    def test_renumber_skips_matching_prefix(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """--renumber does not re-post when [i/N] already matches."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+        initial_calls = rbt_mock.call_count()
+
+        # No changes — positions [1/2],[2/2] still correct
+        r = git_repo.run_gg("rbt-sync", "--renumber")
+        assert r.returncode == 0
+        assert rbt_mock.call_count() == initial_calls
+
+
 class TestPlanPublishColumn:
     def test_publish_flag_shows_yes(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
