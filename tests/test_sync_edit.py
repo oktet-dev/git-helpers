@@ -174,17 +174,42 @@ class TestParseEdgeCases:
 
 
 class TestGetEditor:
+    def _patch_which(self, monkeypatch: pytest.MonkeyPatch, found: set[str]) -> None:
+        """Mock shutil.which to resolve only editors in *found*."""
+        monkeypatch.setattr(
+            "gg.sync_edit.shutil.which",
+            lambda cmd: f"/usr/bin/{cmd}" if cmd in found else None,
+        )
+
     def test_visual_takes_precedence(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VISUAL", "code")
         monkeypatch.setenv("EDITOR", "nano")
+        self._patch_which(monkeypatch, {"code", "nano", "vi"})
         assert get_editor() == "code"
 
     def test_editor_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("VISUAL", raising=False)
         monkeypatch.setenv("EDITOR", "nano")
+        self._patch_which(monkeypatch, {"nano", "vi"})
         assert get_editor() == "nano"
 
     def test_vi_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("VISUAL", raising=False)
         monkeypatch.delenv("EDITOR", raising=False)
+        self._patch_which(monkeypatch, {"vi"})
         assert get_editor() == "vi"
+
+    def test_visual_not_found_falls_back_to_editor(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("VISUAL", "_emacs")
+        monkeypatch.setenv("EDITOR", "nano")
+        self._patch_which(monkeypatch, {"nano", "vi"})
+        assert get_editor() == "nano"
+
+    def test_no_valid_editor_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VISUAL", "_emacs")
+        monkeypatch.setenv("EDITOR", "_nano")
+        self._patch_which(monkeypatch, set())
+        with pytest.raises(RuntimeError, match="no editor found"):
+            get_editor()

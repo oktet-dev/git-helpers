@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 
@@ -33,7 +34,12 @@ _VALID_TRANSITIONS: dict[ActionKind, set[ActionKind]] = {
 
 def get_editor() -> str:
     """Return the user's preferred editor."""
-    return os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+    for editor in (os.environ.get("VISUAL"), os.environ.get("EDITOR"), "vi"):
+        if editor and shutil.which(editor):
+            return editor
+    raise RuntimeError(
+        "no editor found: set VISUAL or EDITOR to a valid executable"
+    )
 
 
 def serialize_plan(actions: list[SyncAction], *, renumber: bool = False) -> str:
