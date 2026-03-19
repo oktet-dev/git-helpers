@@ -32,9 +32,33 @@ def tracking_branch(*, cwd: Path | None = None) -> str:
     return branchname("@{u}", cwd=cwd)
 
 
+def range_base(*, cwd: Path | None = None) -> str:
+    """Resolve the effective base ref for revision ranges.
+
+    When the upstream is a local branch whose own upstream is a
+    remote-tracking ref, return the remote-tracking ref so that
+    the range excludes commits already on the remote.
+    """
+    full = _run("rev-parse", "--symbolic-full-name", "@{u}", cwd=cwd)
+    if full.startswith("refs/remotes/"):
+        return _run("rev-parse", "--abbrev-ref", full, cwd=cwd)
+    if full.startswith("refs/heads/"):
+        local_name = full.removeprefix("refs/heads/")
+        try:
+            parent_full = _run(
+                "rev-parse", "--symbolic-full-name",
+                f"{local_name}@{{u}}", cwd=cwd,
+            )
+            if parent_full.startswith("refs/remotes/"):
+                return _run("rev-parse", "--abbrev-ref", parent_full, cwd=cwd)
+        except subprocess.CalledProcessError:
+            pass
+    return branchname("@{u}", cwd=cwd)
+
+
 def rev_range(*, cwd: Path | None = None) -> str:
-    """Return 'tracking..HEAD' range string."""
-    return f"{tracking_branch(cwd=cwd)}..HEAD"
+    """Return 'base..HEAD' range string."""
+    return f"{range_base(cwd=cwd)}..HEAD"
 
 
 def diff_tree(rev: str, *, cwd: Path | None = None) -> str:

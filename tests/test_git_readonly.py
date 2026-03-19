@@ -1,5 +1,6 @@
 """Tests for git_branchname, git_summary, gitgo_range -- read-only git queries."""
 
+from gg import git
 from tests.conftest import GitRepo
 
 
@@ -36,3 +37,21 @@ class TestGitgoRange:
         r = git_repo.run_gitgo("gitgo_range")
         # Tracks local master, not origin/master
         assert r.stdout.strip() == "master..HEAD"
+
+
+class TestRangeBase:
+    def test_local_tracking_chases_to_remote(self, git_repo: GitRepo) -> None:
+        """branch tracks local master which tracks origin/master → origin/master."""
+        git_repo.create_branch("txq", "master")
+        assert git.range_base(cwd=git_repo.work_dir) == "origin/master"
+
+    def test_direct_remote(self, git_repo: GitRepo) -> None:
+        """branch directly tracks origin/master → origin/master."""
+        git_repo.git("checkout", "-b", "feature", "--track", "origin/master")
+        assert git.range_base(cwd=git_repo.work_dir) == "origin/master"
+
+    def test_chained_local(self, git_repo: GitRepo) -> None:
+        """b tracks a which tracks local master → returns a (one hop only)."""
+        git_repo.create_branch("a", "master")
+        git_repo.create_branch("b", "a")
+        assert git.range_base(cwd=git_repo.work_dir) == "a"
