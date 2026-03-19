@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # Extract review ID from an API href like .../review-requests/123/
@@ -57,18 +58,33 @@ def fetch_reviewers(
     return review["target_people"], review["target_groups"]
 
 
-def follow_chain(first_id: str, *, cwd: Path | None = None) -> list[tuple[str, str]]:
+@dataclass
+class ChainResult:
+    """Result of walking a ReviewBoard dependency chain."""
+
+    chain: list[tuple[str, str]]
+    reviewers: list[str] = field(default_factory=list)
+    groups: list[str] = field(default_factory=list)
+
+
+def follow_chain(first_id: str, *, cwd: Path | None = None) -> ChainResult:
     """Walk the blocks chain starting at first_id.
 
-    Returns [(review_id, summary), ...] in chain order.
+    Returns a ChainResult with the chain list and reviewers/groups from the
+    first review (all reviews in a series share the same reviewers).
     Raises if a review blocks more than one other review (ambiguous chain).
     """
     chain: list[tuple[str, str]] = []
+    reviewers: list[str] = []
+    groups: list[str] = []
     current = first_id
 
     while True:
         review = fetch_review(current, cwd=cwd)
         chain.append((review["id"], review["summary"]))
+        if not chain[1:]:  # first review
+            reviewers = review["target_people"]
+            groups = review["target_groups"]
         blocks = review["blocks"]
 
         if not blocks:
@@ -80,4 +96,4 @@ def follow_chain(first_id: str, *, cwd: Path | None = None) -> list[tuple[str, s
             )
         current = blocks[0]
 
-    return chain
+    return ChainResult(chain=chain, reviewers=reviewers, groups=groups)
