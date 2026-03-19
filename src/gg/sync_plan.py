@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shutil
+
 from gg.matcher import ActionKind, SyncAction
 from gg.numbering import assign_numbers
 
@@ -18,8 +20,31 @@ def _pub_label(action: SyncAction, publish: bool) -> str:
     return "yes" if publish else "draft"
 
 
+def _format_reviewer_header(
+    reviewers: list[str], groups: list[str],
+) -> list[str]:
+    """Format a reviewer/group header that fits the terminal width."""
+    if not reviewers and not groups:
+        return []
+    parts = []
+    if reviewers:
+        parts.append(f"Reviewers: {', '.join(reviewers)}")
+    if groups:
+        parts.append(f"Groups: {', '.join(groups)}")
+    single = "  ".join(parts)
+    cols = shutil.get_terminal_size().columns
+    if len(single) <= cols:
+        return [single, ""]
+    return parts + [""]
+
+
 def format_plan(
-    actions: list[SyncAction], *, renumber: bool = False, publish: bool = False,
+    actions: list[SyncAction],
+    *,
+    renumber: bool = False,
+    publish: bool = False,
+    reviewers: list[str] | None = None,
+    groups: list[str] | None = None,
 ) -> str:
     """Format sync actions as a human-readable plan table."""
     numbered = assign_numbers(actions, renumber=renumber)
@@ -29,7 +54,8 @@ def format_plan(
         header = f"{'#':<10} {'Action':<12} {'Pub':<7} {'Review':<10} Subject"
     else:
         header = f"{'#':<10} {'Action':<12} {'Review':<10} Subject"
-    lines = [header]
+    lines = _format_reviewer_header(reviewers or [], groups or [])
+    lines.append(header)
     lines.append("-" * len(header))
 
     for action, num_str in numbered:
