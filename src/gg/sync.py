@@ -34,6 +34,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p.add_argument("-G", "--groups", action="append", default=[], help="review group (--target-groups)")
     p.add_argument("-n", "--no-numbers", action="store_true", help="don't number the patches")
     p.add_argument("-b", "--branch", default=None, help="explicit --branch for new reviews")
+    p.add_argument("--new", action="store_true",
+                   help="forget old reviews, post current commits as a fresh series")
     p.add_argument("range", nargs="?", default=None, help="revision range (default: tracking..HEAD)")
     p.set_defaults(func=run)
 
@@ -202,12 +204,12 @@ def run(args: argparse.Namespace) -> int:
         return 1
 
     old = review_store.load_reviews(branch_name, cwd=cwd)
-    if not old:
+    if not old and not args.new:
         print("No existing reviews found. Use `gg rbt` to post the initial series.")
         return 1
 
     new = _build_new_commits(revs, cwd=cwd)
-    actions = reconcile(old, new)
+    actions = reconcile([] if args.new else old, new)
 
     if args.interactive:
         edited = edit_plan(actions, renumber=args.renumber)
