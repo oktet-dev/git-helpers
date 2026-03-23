@@ -552,3 +552,78 @@ class TestNoNumbers:
         assert summary_args
         summary = summary_args[0].split("=", 1)[1]
         assert not summary.startswith("[")
+
+
+class TestNewFlag:
+    def test_new_bypasses_no_reviews_guard(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """--new allows sync even when no existing reviews are stored."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+
+        r = git_repo.run_gg("rbt-sync", "--new")
+        assert r.returncode == 0
+        assert "2 created" in r.stderr
+
+    def test_new_creates_all_from_scratch(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """--new with existing reviews produces only CREATE actions (no discard)."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        git_repo.commit("temporary hack")
+        _post_series(git_repo)
+
+        # Drop last commit — normally would show discard
+        git_repo.git("reset", "--hard", "HEAD~1")
+
+        r = git_repo.run_gg("rbt-sync", "--new", "-d")
+        assert r.returncode == 0
+        out = r.stdout
+        assert "create" in out
+        assert "discard" not in out
+
+    def test_new_no_close_calls(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """--new does not close any old reviews on ReviewBoard."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        git_repo.commit("temporary hack")
+        _post_series(git_repo)
+        initial_calls = rbt_mock.call_count()
+
+        # Drop last commit and sync with --new
+        git_repo.git("reset", "--hard", "HEAD~1")
+
+        r = git_repo.run_gg("rbt-sync", "--new")
+        assert r.returncode == 0
+
+        all_calls = rbt_mock.calls()
+        new_calls = all_calls[initial_calls:]
+        has_close = any("close" in c for c in new_calls)
+        assert not has_close
+
+    def test_new_replaces_db(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """After --new, re-running sync sees the fresh series (all keep)."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+
+        # Add a third commit, sync with --new
+        git_repo.commit("new feature")
+        r = git_repo.run_gg("rbt-sync", "--new")
+        assert r.returncode == 0
+
+        # Re-running plain sync should show all keep
+        r2 = git_repo.run_gg("rbt-sync", "-d")
+        assert r2.returncode == 0
+        lines = [l for l in r2.stdout.splitlines() if "keep" in l]
+        assert len(lines) == 3
