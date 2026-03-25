@@ -65,7 +65,7 @@ def assign_numbers(
         labels[i] = f"{prev_int}.{frac_idx}" if prev_int > 0 else f"0.{frac_idx}"
 
     # Third pass: integer positions for appends after all matched commits
-    next_int = 0
+    next_int = 1
     for i in range(len(non_discard) - 1, -1, -1):
         if non_discard[i].old_entry is not None:
             next_int = non_discard[i].old_entry.position + 1
