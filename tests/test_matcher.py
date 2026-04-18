@@ -40,6 +40,28 @@ class TestExactMatch:
         non_discard = [a for a in actions if a.kind != ActionKind.DISCARD]
         assert non_discard[0].kind == ActionKind.KEEP
 
+    def test_subject_changed_same_diff_is_update(self) -> None:
+        """Editing the commit subject without touching the diff triggers UPDATE.
+
+        Fuzzy-matched against the old review (high subject similarity), same
+        diff_hash, but the user has reworded -- the new summary must reach RB.
+        """
+        old = [_entry(0, "100", "fix the crash in parser", "h1")]
+        new = [_commit("fix the crash in parser module", "h1")]
+        actions = reconcile(old, new)
+        non_discard = [a for a in actions if a.kind != ActionKind.DISCARD]
+        assert len(non_discard) == 1
+        assert non_discard[0].kind == ActionKind.UPDATE
+        assert non_discard[0].old_entry.review_id == "100"
+
+    def test_subject_change_ignores_prefix_diff(self) -> None:
+        """A change only in the [i/N]: prefix is not a real subject edit."""
+        old = [_entry(0, "100", "fix crash", "h1")]
+        new = [_commit("[1/1]: fix crash", "h1")]
+        actions = reconcile(old, new)
+        non_discard = [a for a in actions if a.kind != ActionKind.DISCARD]
+        assert non_discard[0].kind == ActionKind.KEEP
+
 
 class TestCreateAndDiscard:
     def test_new_commit_creates(self) -> None:

@@ -123,6 +123,9 @@ def reconcile(
             entry = old[matches[ni]]
             if commit.diff_hash != entry.diff_hash:
                 kind = ActionKind.UPDATE
+            elif strip_prefix(commit.subject) != strip_prefix(entry.subject):
+                # Diff unchanged but commit subject edited -- push the new summary.
+                kind = ActionKind.UPDATE
             else:
                 kind = ActionKind.KEEP
             actions.append(SyncAction(

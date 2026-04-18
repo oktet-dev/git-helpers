@@ -108,7 +108,7 @@ def post_one(
             cmd.extend(["--target-groups", group])
 
     if review_id:
-        cmd.extend(["-r", review_id])
+        cmd.extend(["-r", review_id, "--guess-description", "yes"])
 
     cmd.append(f"--summary={full_summary}")
 
