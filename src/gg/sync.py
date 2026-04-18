@@ -9,7 +9,7 @@ from pathlib import Path
 from gg import diff_cache, git, rb_api, review_store
 from gg.matcher import ActionKind, NewCommit, SyncAction, reconcile
 from gg.numbering import assign_numbers
-from gg.rbt_close import close_discarded
+from gg.rbt_close import close_discarded, close_submitted
 from gg.rbt_post import post_one
 from gg.sync_edit import edit_plan
 from gg.sync_plan import format_plan
@@ -36,6 +36,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p.add_argument("-b", "--branch", default=None, help="explicit --branch for new reviews")
     p.add_argument("--new", action="store_true",
                    help="forget old reviews, post current commits as a fresh series")
+    p.add_argument("--close", action="store_true",
+                   help="close all reviews as submitted and clear DB")
     p.add_argument("range", nargs="?", default=None, help="revision range (default: tracking..HEAD)")
     p.set_defaults(func=run)
 
@@ -195,6 +197,21 @@ def run(args: argparse.Namespace) -> int:
     cwd = Path.cwd()
     branch_name = git.branchname(cwd=cwd)
     tracking = git.tracking_branch(cwd=cwd)
+
+    if args.close:
+        old = review_store.load_reviews(branch_name, cwd=cwd)
+        if not old:
+            print("No reviews to close.")
+            return 1
+        for entry in old:
+            print(f"  close r/{entry.review_id}  {entry.subject}")
+        if args.dry:
+            return 0
+        for entry in old:
+            close_submitted(entry.review_id, verbose=args.verbose, cwd=cwd)
+        review_store.clear_branch(branch_name, cwd=cwd)
+        print(f"Closed {len(old)} review(s) as submitted.", file=sys.stderr)
+        return 0
 
     range_spec = args.range or git.rev_range(cwd=cwd)
     revs = git.list_revs(range_spec, cwd=cwd)
