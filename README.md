@@ -58,6 +58,7 @@ operations support `-d`/`--dry` for dry-run.
 | `git gg rbt-sync -i` | Interactive mode -- edit the sync plan in `$EDITOR` before executing |
 | `git gg rbt-sync -U alice -G devteam` | Override reviewers/groups for new reviews |
 | `git gg rbt-sync --no-numbers` | Suppress `[i/N]:` prefix on posted reviews |
+| `git gg rbt-sync --renumber` | Full `[1/N]..[N/N]` renumber instead of fractional |
 | `git gg rbt-sync --new` | Forget old reviews and post the current commits as a fresh series |
 | `git gg rbt-sync --close` | Close all reviews as submitted and clear the DB |
 | `git gg rbt-import` | Import an existing ReviewBoard chain into `reviews.db` |
@@ -134,7 +135,9 @@ git gorbt -p -U kostik
 ### Syncing a modified series
 
 After posting a multi-patch series, you amend/reorder/add/drop commits
-and want to update ReviewBoard to match:
+or just edit commit messages and want to update ReviewBoard to match.
+A commit whose subject or body changed is re-posted even if the diff
+is unchanged, so RB's summary and description track the git commit:
 
 ```shell
 # See what changed
@@ -144,7 +147,12 @@ git gg rbt-sync -d
 git gg rbt-sync -i
 
 # Or just execute the plan directly
+# (re-posts commits whose diff OR commit message changed)
 git gg rbt-sync
+
+# Force a full renumber -- re-posts every matched commit with its new
+# [i/N] prefix
+git gg rbt-sync --renumber
 
 # Override reviewers/groups for any newly created reviews
 git gg rbt-sync -U alice -G devteam
