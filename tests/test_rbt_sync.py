@@ -554,6 +554,93 @@ class TestNoNumbers:
         assert not summary.startswith("[")
 
 
+class TestCloseFlag:
+    def test_close_no_reviews_errors(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """--close with no DB entries returns 1."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+
+        r = git_repo.run_gg("rbt-sync", "--close")
+        assert r.returncode == 1
+        assert "No reviews to close" in r.stdout
+
+    def test_close_dry_run_shows_plan(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """-d --close prints reviews but makes no rbt calls."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+        initial_calls = rbt_mock.call_count()
+
+        # Simulate pushed branch: reset to master so tracking..HEAD is empty
+        git_repo.git("reset", "--hard", "master")
+
+        r = git_repo.run_gg("rbt-sync", "-d", "--close")
+        assert r.returncode == 0
+        assert "close r/" in r.stdout
+        # No new rbt calls in dry mode
+        assert rbt_mock.call_count() == initial_calls
+
+    def test_close_calls_rbt_close_submitted(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """--close calls rbt close --close-type=submitted for each review."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+        initial_calls = rbt_mock.call_count()
+
+        git_repo.git("reset", "--hard", "master")
+
+        r = git_repo.run_gg("rbt-sync", "--close")
+        assert r.returncode == 0
+
+        all_calls = rbt_mock.calls()
+        new_calls = all_calls[initial_calls:]
+        close_calls = [c for c in new_calls if c and c[0] == "close"]
+        assert len(close_calls) == 2
+        for c in close_calls:
+            assert "--close-type=submitted" in c
+
+    def test_close_clears_db(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """After --close, load_reviews() returns empty."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        _post_series(git_repo)
+
+        git_repo.git("reset", "--hard", "master")
+
+        r = git_repo.run_gg("rbt-sync", "--close")
+        assert r.returncode == 0
+
+        # Try --close again: should error with "no reviews"
+        r2 = git_repo.run_gg("rbt-sync", "--close")
+        assert r2.returncode == 1
+        assert "No reviews to close" in r2.stdout
+
+    def test_close_empty_range_ok(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """--close works even when tracking..HEAD is empty (main use case)."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        _post_series(git_repo)
+
+        # Push to origin so tracking..HEAD becomes empty
+        git_repo.git("reset", "--hard", "master")
+
+        r = git_repo.run_gg("rbt-sync", "--close")
+        assert r.returncode == 0
+        assert "Closed 1 review(s) as submitted" in r.stderr
+
+
 class TestNewFlag:
     def test_new_bypasses_no_reviews_guard(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
