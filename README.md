@@ -1,9 +1,9 @@
 Git Helpers
 ===========
 
-A collection of shell functions and git aliases that implement a
-branch-based development workflow on top of git. Supports both
-ReviewBoard (`rbt`) and GitHub pull request workflows.
+A collection of shell functions, git aliases, and a Python CLI (`gg`)
+that implement a branch-based development workflow on top of git.
+Supports both ReviewBoard (`rbt`) and GitHub pull request workflows.
 
 Installation
 ------------
@@ -58,10 +58,15 @@ operations support `-d`/`--dry` for dry-run.
 | `git gg rbt-sync -i` | Interactive mode -- edit the sync plan in `$EDITOR` before executing |
 | `git gg rbt-sync -U alice -G devteam` | Override reviewers/groups for new reviews |
 | `git gg rbt-sync --no-numbers` | Suppress `[i/N]:` prefix on posted reviews |
+| `git gg rbt-sync --new` | Forget old reviews and post the current commits as a fresh series |
+| `git gg rbt-sync --close` | Close all reviews as submitted and clear the DB |
 | `git gg rbt-import` | Import an existing ReviewBoard chain into `reviews.db` |
 | `git gg db` | Inspect and manage `.gg/reviews.db` (list/clear/reinit) |
 
-The legacy `git gorbt` alias still works and delegates to `git gg rbt`.
+Shortcut aliases:
+
+- `git rbt ...` -> `git gg rbt-sync ...` (the most common command)
+- `git gorbt ...` -> `git gg rbt ...` (legacy)
 
 ### Pull requests (bash)
 
@@ -82,11 +87,12 @@ Set `GG_GIT_HELPERS_FORKNAME` to configure the fork remote name.
 
 | Alias | Description |
 |-------|-------------|
-| `git up` | `pull --rebase` |
-| `git refresh` | `pull --rebase` for the tracking branch |
-| `git tree` / `git gotree` | Graph-based log visualization |
-| `git graft` | Cherry-pick a commit |
+| `git up` | `checkout` |
+| `git refresh` | `commit -a --amend --no-edit` |
+| `git graft` | `cherry-pick -x` |
 | `git show-stat` | `show --stat` |
+| `git tree` | Graph-based log visualization |
+| `git gotree` | `git tree` restricted to the current branch's range |
 | `git branchname` | Print branch name of a revision |
 | `git summary` | Print subject line of a revision |
 
@@ -145,6 +151,12 @@ git gg rbt-sync -U alice -G devteam
 
 # Suppress [i/N]: numbering prefix
 git gg rbt-sync --no-numbers
+
+# Start a fresh series, forgetting old reviews
+git gg rbt-sync --new
+
+# After "Ship it!" on the whole series -- close everything and clear state
+git gg rbt-sync --close
 ```
 
 ### Importing an existing ReviewBoard chain
