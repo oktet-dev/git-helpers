@@ -5,12 +5,48 @@ from __future__ import annotations
 import re
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from gg import bugs, git
 
 _REVIEW_RE = re.compile(r"^Review request #(\d+) posted\.", re.MULTILINE)
+# Matches a tqdm-style progress line: "<label><bar chars> [i/N]".
+# Bar chars include block glyphs and spaces.
+_PROGRESS_RE = re.compile(r"^(.*?)\s*[\u2580-\u259F ]*\s*\[\d+/\d+\]\s*$")
+
+
+def clean_output(text: str) -> str:
+    """Strip rbt progress-bar noise from captured output.
+
+    rbtools uses a tqdm-style progress bar. On a TTY it rewrites the line
+    with \\r; under ``subprocess.run(capture_output=True)`` stdout is not a
+    TTY and each frame lands on its own newline-terminated line, producing
+    duplicated bars in captured output. Collapse both cases:
+
+    - within a line, keep only the last \\r-delimited frame
+    - across lines, deduplicate consecutive progress frames for the same label
+    """
+    lines: list[str] = []
+    prev_label: str | None = None
+    for raw in text.splitlines():
+        line = raw.split("\r")[-1]
+        m = _PROGRESS_RE.match(line)
+        if m:
+            label = m.group(1).rstrip()
+            if label and label == prev_label:
+                lines[-1] = line
+            else:
+                lines.append(line)
+                prev_label = label
+        else:
+            lines.append(line)
+            prev_label = None
+    out = "\n".join(lines)
+    if text.endswith("\n"):
+        out += "\n"
+    return out
 
 
 def _shell_quote_arg(arg: str) -> str:
@@ -31,6 +67,7 @@ class PostResult:
 
     review_id: str | None
     output: str
+    returncode: int = 0
 
 
 def post_one(
@@ -97,11 +134,20 @@ def post_one(
     # In update mode rbt prompts "Update Review Request #NNN?" -- auto-confirm
     stdin = "yes\n" if (not first_post or review_id) else None
     r = subprocess.run(cmd, cwd=cwd, input=stdin, capture_output=True, text=True)
-    output = r.stdout + r.stderr
-    if verbose:
-        print(output, end="")
+    cleaned = clean_output(r.stdout + r.stderr)
+
+    if r.returncode != 0:
+        sys.stderr.write(f"\n[gg] rbt post failed (exit {r.returncode})\n")
+        sys.stderr.write(f"[gg] command: {_shell_join(cmd)}\n")
+        sys.stderr.write(cleaned)
+        if not cleaned.endswith("\n"):
+            sys.stderr.write("\n")
+    elif verbose:
+        sys.stdout.write(cleaned)
+        if not cleaned.endswith("\n"):
+            sys.stdout.write("\n")
 
     m = _REVIEW_RE.search(r.stdout)
     review_id = m.group(1) if m else None
 
-    return PostResult(review_id=review_id, output=output)
+    return PostResult(review_id=review_id, output=cleaned, returncode=r.returncode)

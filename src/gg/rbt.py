@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from gg import diff_cache, git, review_store
@@ -94,6 +95,8 @@ def run(args: argparse.Namespace) -> int:
                 depends_on=depends,
                 cwd=cwd,
             )
+            if result.returncode != 0:
+                return 1
             if result.review_id:
                 review_entries.append(review_store.ReviewEntry(
                     branch=branch_name, position=1,
@@ -109,6 +112,7 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     # Multiple commits: loop with numbering and dependency chaining
+    failed = False
     for idx, rev in enumerate(revs, start=continue_from + 1):
         unchanged, h = _is_unchanged(rev, cached, cwd)
         new_hashes.add(h)
@@ -145,6 +149,14 @@ def run(args: argparse.Namespace) -> int:
             cwd=cwd,
         )
 
+        if result.returncode != 0:
+            failed = True
+            print(
+                f"[gg] aborted at patch {idx}/{total}; {idx - continue_from - 1} posted",
+                file=sys.stderr,
+            )
+            break
+
         if result.review_id:
             depends = result.review_id
             review_entries.append(review_store.ReviewEntry(
@@ -158,4 +170,4 @@ def run(args: argparse.Namespace) -> int:
         diff_cache.save_hashes(new_hashes, cwd=cwd, branch=branch_name)
         if review_entries:
             review_store.save_reviews(review_entries, cwd=cwd)
-    return 0
+    return 1 if failed else 0
