@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from gg import db, rbt, rbt_import, sync
+from gg import db, publish, rbt, rbt_import, sync
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -13,6 +13,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gg", description="git-helpers CLI")
     sub = parser.add_subparsers(dest="command")
     db.add_parser(sub)
+    publish.add_parser(sub)
     rbt.add_parser(sub)
     rbt_import.add_parser(sub)
     sync.add_parser(sub)

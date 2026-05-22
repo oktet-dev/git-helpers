@@ -8,6 +8,7 @@ from pathlib import Path
 
 from gg import diff_cache, git, review_store
 from gg.rbt_post import post_one
+from gg.rbt_publish import publish_one
 
 _BOLD = "\033[1m"
 _RESET = "\033[0m"
@@ -67,6 +68,11 @@ def run(args: argparse.Namespace) -> int:
 
     branch_name = git.branchname(cwd=cwd)
     cached = diff_cache.load_hashes(cwd=cwd, branch=branch_name) if args.update else set()
+    # Map diff_hash -> review_id so we can publish unchanged drafts directly.
+    hash_to_id: dict[str, str] = {}
+    if args.update:
+        for e in review_store.load_reviews(branch_name, cwd=cwd):
+            hash_to_id.setdefault(e.diff_hash, e.review_id)
     new_hashes: set[str] = set()
     review_entries: list[review_store.ReviewEntry] = []
 
@@ -78,7 +84,14 @@ def run(args: argparse.Namespace) -> int:
 
         summary_text = git.summary(rev, cwd=cwd)
         if args.update and unchanged:
-            if show_progress:
+            rid = hash_to_id.get(h)
+            if args.publish and rid:
+                if show_progress:
+                    print(f"{_BOLD}publish (unchanged): {summary_text}{_RESET}", flush=True)
+                rc = publish_one(rid, dry_run=args.dry, verbose=args.verbose, cwd=cwd)
+                if rc != 0:
+                    return 1
+            elif show_progress:
                 print(f"{_BOLD}skip (unchanged): {summary_text}{_RESET}")
         else:
             if show_progress:
@@ -118,9 +131,29 @@ def run(args: argparse.Namespace) -> int:
         new_hashes.add(h)
 
         if args.update and unchanged:
-            if show_progress:
-                summary_text = git.summary(rev, cwd=cwd)
-                print(f"{_BOLD}skip (unchanged): {summary_text}{_RESET}")
+            summary_text = git.summary(rev, cwd=cwd)
+            rid = hash_to_id.get(h)
+            if args.publish and rid:
+                if show_progress:
+                    print(
+                        f"{_BOLD}publish (unchanged): {summary_text}{_RESET}",
+                        flush=True,
+                    )
+                rc = publish_one(rid, dry_run=args.dry, verbose=args.verbose, cwd=cwd)
+                if rc != 0:
+                    failed = True
+                    print(
+                        f"[gg] aborted at patch {idx}/{total}; "
+                        f"{idx - continue_from - 1} processed",
+                        file=sys.stderr,
+                    )
+                    break
+                depends = rid
+            else:
+                if show_progress:
+                    print(f"{_BOLD}skip (unchanged): {summary_text}{_RESET}")
+                if rid:
+                    depends = rid
             continue
 
         summary_text = git.summary(rev, cwd=cwd)

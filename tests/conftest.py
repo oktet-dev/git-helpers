@@ -169,6 +169,9 @@ if cmd == "api-get":
 elif cmd == "close":
     print("Discarded review request.")
 
+elif cmd == "publish":
+    print("Review request published.")
+
 else:
     args = sys.argv[2:]
     people = []

@@ -342,3 +342,47 @@ class TestSmartUpdate:
         out = _plain(r.stdout)
         assert "posting: BUG-1: first ..." in out
         assert "Review request" in out
+
+
+class TestUpdatePublishUnchanged:
+    """When --publish is set, unchanged drafts must still be published."""
+
+    def test_publishes_unchanged_drafts(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        git_repo.commit("BUG-2: second")
+        git_repo.run_gg("rbt")
+        assert rbt_mock.call_count() == 2
+        # Capture review IDs assigned by the mock (1000, 1001)
+        post_calls = rbt_mock.calls()
+        first_ids = [c[0] for c in post_calls]
+        assert first_ids == ["post", "post"]
+
+        r = git_repo.run_gg("rbt", "-u", "--publish", "--progress")
+        out = _plain(r.stdout)
+
+        # Two rbt publish calls -- one per unchanged commit
+        publish_calls = [c for c in rbt_mock.calls() if c and c[0] == "publish"]
+        assert len(publish_calls) == 2
+        # Each publish call references a review ID from the original post
+        published_ids = sorted(c[1] for c in publish_calls)
+        assert published_ids == ["1000", "1001"]
+        assert r.returncode == 0
+        assert "publish (unchanged): BUG-1: first" in out
+        assert "publish (unchanged): BUG-2: second" in out
+
+    def test_no_publish_when_flag_absent(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        """Without --publish, unchanged drafts are simply skipped."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        git_repo.run_gg("rbt")
+        assert rbt_mock.call_count() == 1
+
+        git_repo.run_gg("rbt", "-u")
+        # Still just the one post call; no rbt publish invoked
+        publish_calls = [c for c in rbt_mock.calls() if c and c[0] == "publish"]
+        assert publish_calls == []

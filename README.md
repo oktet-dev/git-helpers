@@ -61,6 +61,7 @@ operations support `-d`/`--dry` for dry-run.
 | `git gg rbt-sync --renumber` | Full `[1/N]..[N/N]` renumber instead of fractional |
 | `git gg rbt-sync --new` | Forget old reviews and post the current commits as a fresh series |
 | `git gg rbt-sync --close` | Close all reviews as submitted and clear the DB |
+| `git gg publish` | Publish drafts of every review request on the current branch |
 | `git gg rbt-import` | Import an existing ReviewBoard chain into `reviews.db` |
 | `git gg db` | Inspect and manage `.gg/reviews.db` (list/clear/reinit) |
 
@@ -166,6 +167,24 @@ git gg rbt-sync --new
 # After "Ship it!" on the whole series -- close everything and clear state
 git gg rbt-sync --close
 ```
+
+### Post, review, publish
+
+Drafts on ReviewBoard are private until published. To post a series as
+drafts, look it over (or have a teammate poke at it), then publish:
+
+```shell
+# Post -- no -p, so reviews stay as drafts
+git gg rbt
+
+# (optional) eyeball things on RB, tweak via the web UI...
+
+# Publish every draft for this branch
+git gg publish
+```
+
+`gg rbt -u --publish` and `gg rbt-sync -p` also publish unchanged
+drafts (in addition to creating/updating reviews whose diff changed).
 
 ### Importing an existing ReviewBoard chain
 

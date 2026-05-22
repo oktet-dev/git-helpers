@@ -35,12 +35,13 @@ All `go*` git subcommands follow the same pattern: a git alias in `gitconfig.go`
 
 Entry point: `gg.cli:main` (exposed as the `gg` script via pyproject). `cli.py` dispatches to subcommand modules, each of which registers its own argparse subparser:
 
-- **rbt.py** -- `gg rbt`: post a commit series to ReviewBoard.
-- **sync.py** -- `gg rbt-sync`: reconcile the current commit series against the last posted set (keep/update/create/discard), with `-i` to edit the plan in `$EDITOR`, `--new` to start a fresh series, `--close` to close everything.
+- **rbt.py** -- `gg rbt`: post a commit series to ReviewBoard. With `-u --publish` it also calls `rbt publish` on unchanged drafts (looking up the review id from `reviews.db`).
+- **sync.py** -- `gg rbt-sync`: reconcile the current commit series against the last posted set (keep/update/create/discard), with `-i` to edit the plan in `$EDITOR`, `--new` to start a fresh series, `--close` to close everything. With `-p`, KEEP entries are still pushed through `rbt publish`.
+- **publish.py** -- `gg publish`: read `reviews.db` for the current branch and run `rbt publish <id>` on every entry. The "post drafts now, publish later" half of the workflow.
 - **rbt_import.py** -- `gg rbt-import`: walk an existing RB dependency chain and populate `reviews.db`.
 - **db.py** -- `gg db`: list/clear/reinit state in `.gg/reviews.db`.
 
-Supporting modules: `matcher.py` (commit/review reconciliation with fuzzy subject matching), `review_store.py` (SQLite schema + CRUD; subject-prefix parsing), `rb_api.py` (ReviewBoard API shim over `rbt api-get`), `rbt_post.py` / `rbt_close.py` (shell out to `rbt post` / `rbt close`), `sync_plan.py` / `sync_edit.py` (plan formatting + interactive editor round-trip), `numbering.py` (fractional/full renumbering), `diff_cache.py` (commit diff hashing for change detection), `git.py` (git plumbing wrappers), `bugs.py` (bug-id extraction from summaries).
+Supporting modules: `matcher.py` (commit/review reconciliation with fuzzy subject matching), `review_store.py` (SQLite schema + CRUD; subject-prefix parsing), `rb_api.py` (ReviewBoard API shim over `rbt api-get`), `rbt_post.py` / `rbt_close.py` / `rbt_publish.py` (shell out to `rbt post` / `rbt close` / `rbt publish`), `sync_plan.py` / `sync_edit.py` (plan formatting + interactive editor round-trip), `numbering.py` (fractional/full renumbering), `diff_cache.py` (commit diff hashing for change detection), `git.py` (git plumbing wrappers), `bugs.py` (bug-id extraction from summaries).
 
 ### State
 

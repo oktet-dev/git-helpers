@@ -11,6 +11,7 @@ from gg.matcher import ActionKind, NewCommit, SyncAction, reconcile
 from gg.numbering import assign_numbers
 from gg.rbt_close import close_discarded, close_submitted
 from gg.rbt_post import post_one
+from gg.rbt_publish import publish_one
 from gg.sync_edit import edit_plan
 from gg.sync_plan import format_plan
 
@@ -107,8 +108,14 @@ def _execute(
                 and not action.needs_dep_update
                 and (not renumber
                      or _number_matches(action.old_entry, num_str, old_total))):
-            # Nothing changed, preserve existing entry
+            # Nothing about the commit changed. If --publish was requested,
+            # still publish the (possibly draft) review request.
             assert action.old_entry is not None
+            if publish:
+                publish_one(
+                    action.old_entry.review_id,
+                    dry_run=dry_run, verbose=verbose, cwd=cwd,
+                )
             entries.append(review_store.ReviewEntry(
                 branch=branch_name,
                 position=len(entries) + 1,

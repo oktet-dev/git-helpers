@@ -714,3 +714,41 @@ class TestNewFlag:
         assert r2.returncode == 0
         lines = [l for l in r2.stdout.splitlines() if "keep" in l]
         assert len(lines) == 3
+
+
+class TestPublishUnchangedOnSync:
+    """rbt-sync -p must publish KEEP drafts, not just no-op them."""
+
+    def test_publish_publishes_kept_reviews(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+        initial_calls = rbt_mock.call_count()
+        # Initial _post_series uses `gg rbt` without -p; reviews are drafts.
+
+        r = git_repo.run_gg("rbt-sync", "-p")
+        assert r.returncode == 0
+
+        new_calls = rbt_mock.calls()[initial_calls:]
+        publish_calls = [c for c in new_calls if c and c[0] == "publish"]
+        # Both KEEP entries get an explicit rbt publish call
+        assert len(publish_calls) == 2
+        published_ids = sorted(c[1] for c in publish_calls)
+        assert published_ids == ["1000", "1001"]
+
+    def test_no_publish_when_flag_absent(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        _post_series(git_repo)
+        initial_calls = rbt_mock.call_count()
+
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0
+
+        new_calls = rbt_mock.calls()[initial_calls:]
+        assert [c for c in new_calls if c and c[0] == "publish"] == []
