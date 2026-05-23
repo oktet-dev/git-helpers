@@ -85,6 +85,19 @@ Shortcut aliases:
 
 Set `GG_GIT_HELPERS_FORKNAME` to configure the fork remote name.
 
+### Environment variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `GG_GIT_HELPERS_FORKNAME` | (unset) | Remote name used by `gosyncfrom` / `gosyncto` |
+| `GG_RBT_RATE_LIMIT_RETRIES` | `3` | Retries on RB API 114 rate-limit |
+| `GG_RBT_RATE_LIMIT_INITIAL_DELAY` | `10` | Seconds before first rate-limit retry |
+| `GG_RBT_RATE_LIMIT_FACTOR` | `3` | Multiplier between rate-limit retries |
+| `GG_RBT_MISSING_BASE_RETRIES` | `3` | Retries on RB API 207 (base commit missing from mirror) |
+| `GG_RBT_MISSING_BASE_DELAY` | `300` | Seconds between missing-base retries |
+
+Set any `RETRIES` var to `0` to disable retries for that class.
+
 ### Utility aliases (gitconfig)
 
 | Alias | Description |

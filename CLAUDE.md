@@ -41,7 +41,7 @@ Entry point: `gg.cli:main` (exposed as the `gg` script via pyproject). `cli.py` 
 - **rbt_import.py** -- `gg rbt-import`: walk an existing RB dependency chain and populate `reviews.db`.
 - **db.py** -- `gg db`: list/clear/reinit state in `.gg/reviews.db`.
 
-Supporting modules: `matcher.py` (commit/review reconciliation with fuzzy subject matching), `review_store.py` (SQLite schema + CRUD; subject-prefix parsing), `rb_api.py` (ReviewBoard API shim over `rbt api-get`), `rbt_post.py` / `rbt_close.py` / `rbt_publish.py` (shell out to `rbt post` / `rbt close` / `rbt publish`), `sync_plan.py` / `sync_edit.py` (plan formatting + interactive editor round-trip), `numbering.py` (fractional/full renumbering), `diff_cache.py` (commit diff hashing for change detection), `git.py` (git plumbing wrappers), `bugs.py` (bug-id extraction from summaries).
+Supporting modules: `matcher.py` (commit/review reconciliation with fuzzy subject matching), `review_store.py` (SQLite schema + CRUD; subject-prefix parsing), `rb_api.py` (ReviewBoard API shim over `rbt api-get`), `rbt_post.py` / `rbt_close.py` / `rbt_publish.py` (shell out to `rbt post` / `rbt close` / `rbt publish`), `rbt_retry.py` (classifies transient `rbt` failures and retries on rate-limit / missing-base errors), `sync_plan.py` / `sync_edit.py` (plan formatting + interactive editor round-trip), `numbering.py` (fractional/full renumbering), `diff_cache.py` (commit diff hashing for change detection), `git.py` (git plumbing wrappers), `bugs.py` (bug-id extraction from summaries).
 
 ### State
 
