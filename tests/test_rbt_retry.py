@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gg.rbt_retry import RetryClass, classify
+from gg.rbt_retry import RetryClass, classify, rate_limit_schedule, missing_base_schedule
 
 
 class TestClassify:
@@ -36,3 +36,35 @@ class TestClassify:
 
     def test_fatal_on_empty_output(self) -> None:
         assert classify(2, "") is RetryClass.FATAL
+
+
+class TestSchedules:
+    def test_rate_limit_defaults(self, monkeypatch) -> None:
+        monkeypatch.delenv("GG_RBT_RATE_LIMIT_RETRIES", raising=False)
+        monkeypatch.delenv("GG_RBT_RATE_LIMIT_INITIAL_DELAY", raising=False)
+        monkeypatch.delenv("GG_RBT_RATE_LIMIT_FACTOR", raising=False)
+        assert rate_limit_schedule() == [10, 30, 90]
+
+    def test_rate_limit_env_override(self, monkeypatch) -> None:
+        monkeypatch.setenv("GG_RBT_RATE_LIMIT_RETRIES", "2")
+        monkeypatch.setenv("GG_RBT_RATE_LIMIT_INITIAL_DELAY", "5")
+        monkeypatch.setenv("GG_RBT_RATE_LIMIT_FACTOR", "2")
+        assert rate_limit_schedule() == [5, 10]
+
+    def test_rate_limit_zero_retries(self, monkeypatch) -> None:
+        monkeypatch.setenv("GG_RBT_RATE_LIMIT_RETRIES", "0")
+        assert rate_limit_schedule() == []
+
+    def test_missing_base_defaults(self, monkeypatch) -> None:
+        monkeypatch.delenv("GG_RBT_MISSING_BASE_RETRIES", raising=False)
+        monkeypatch.delenv("GG_RBT_MISSING_BASE_DELAY", raising=False)
+        assert missing_base_schedule() == [300, 300, 300]
+
+    def test_missing_base_env_override(self, monkeypatch) -> None:
+        monkeypatch.setenv("GG_RBT_MISSING_BASE_RETRIES", "2")
+        monkeypatch.setenv("GG_RBT_MISSING_BASE_DELAY", "60")
+        assert missing_base_schedule() == [60, 60]
+
+    def test_missing_base_zero_retries(self, monkeypatch) -> None:
+        monkeypatch.setenv("GG_RBT_MISSING_BASE_RETRIES", "0")
+        assert missing_base_schedule() == []

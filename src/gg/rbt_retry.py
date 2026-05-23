@@ -7,6 +7,7 @@ number of attempts. See docs/superpowers/specs/2026-05-22-rbt-retry-design.md.
 
 from __future__ import annotations
 
+import os
 import re
 from enum import Enum
 
@@ -37,3 +38,25 @@ def classify(returncode: int, output: str) -> RetryClass:
     if _MISSING_BASE_RE.search(output):
         return RetryClass.MISSING_BASE
     return RetryClass.FATAL
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    return int(raw)
+
+
+def rate_limit_schedule() -> list[int]:
+    """Delays (seconds) between rate-limit retries, derived from env."""
+    retries = _int_env("GG_RBT_RATE_LIMIT_RETRIES", 3)
+    initial = _int_env("GG_RBT_RATE_LIMIT_INITIAL_DELAY", 10)
+    factor = _int_env("GG_RBT_RATE_LIMIT_FACTOR", 3)
+    return [int(initial * factor ** i) for i in range(retries)]
+
+
+def missing_base_schedule() -> list[int]:
+    """Delays (seconds) between missing-base retries, derived from env."""
+    retries = _int_env("GG_RBT_MISSING_BASE_RETRIES", 3)
+    delay = _int_env("GG_RBT_MISSING_BASE_DELAY", 300)
+    return [delay] * retries
