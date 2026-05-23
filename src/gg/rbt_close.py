@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shlex
-import subprocess
 from pathlib import Path
 
 from gg.rbt_retry import run_with_retry
