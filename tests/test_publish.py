@@ -92,3 +92,25 @@ class TestGgPublish:
         # Each line should mention the review id
         assert "r/1000" in out
         assert "r/1001" in out
+
+
+class TestPublishRetry:
+    def test_recovers_after_207(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo._env["GG_RBT_MISSING_BASE_DELAY"] = "0"
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        _post_series(git_repo)
+
+        rbt_mock.queue_failure(
+            output="Error Message: The file was not found in the repository.\n"
+                   "API Code: code: 207\n",
+            returncode=1,
+            count=1,
+        )
+        r = git_repo.run_gg("publish")
+        assert r.returncode == 0
+        # The first rbt publish failed, the retry succeeded
+        publish_calls = [c for c in rbt_mock.calls() if c and c[0] == "publish"]
+        assert len(publish_calls) == 2

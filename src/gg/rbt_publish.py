@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from gg.rbt_retry import run_with_retry
+
 
 def publish_one(
     review_id: str,
@@ -22,7 +24,7 @@ def publish_one(
         print(shlex.join(cmd))
         return 0
 
-    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    r = run_with_retry(cmd, cwd=cwd)
     if r.returncode != 0:
         sys.stderr.write(f"\n[gg] rbt publish r/{review_id} failed (exit {r.returncode})\n")
         sys.stderr.write(r.stdout + r.stderr)

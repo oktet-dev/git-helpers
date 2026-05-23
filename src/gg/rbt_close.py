@@ -6,6 +6,8 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from gg.rbt_retry import run_with_retry
+
 
 def close_discarded(
     review_id: str,
@@ -21,7 +23,7 @@ def close_discarded(
         print(shlex.join(cmd))
         return
 
-    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    r = run_with_retry(cmd, cwd=cwd)
     if verbose:
         output = r.stdout + r.stderr
         if output:
@@ -42,7 +44,7 @@ def close_submitted(
         print(shlex.join(cmd))
         return
 
-    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    r = run_with_retry(cmd, cwd=cwd)
     if verbose:
         output = r.stdout + r.stderr
         if output:
