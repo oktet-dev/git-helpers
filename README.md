@@ -59,6 +59,7 @@ operations support `-d`/`--dry` for dry-run.
 | `git gg rbt-sync -U alice -G devteam` | Override reviewers/groups for new reviews |
 | `git gg rbt-sync --no-numbers` | Suppress `[i/N]:` prefix on posted reviews |
 | `git gg rbt-sync --renumber` | Full `[1/N]..[N/N]` renumber instead of fractional |
+| `git gg rbt-sync -f` | Re-post every matched commit, ignoring the diff-hash cache |
 | `git gg rbt-sync --new` | Forget old reviews and post the current commits as a fresh series |
 | `git gg rbt-sync --close` | Close all reviews as submitted and clear the DB |
 | `git gg publish` | Publish drafts of every review request on the current branch |
@@ -167,6 +168,14 @@ git gg rbt-sync
 # Force a full renumber -- re-posts every matched commit with its new
 # [i/N] prefix
 git gg rbt-sync --renumber
+
+# Re-post every matched commit even if nothing changed -- e.g. after
+# manual edits to a draft on the RB web UI, or to recover from a
+# cache that's gone stale.
+git gg rbt-sync -f
+
+# Or on the older command: bypass the diff-hash cache
+git gg rbt -u -f
 
 # Override reviewers/groups for any newly created reviews
 git gg rbt-sync -U alice -G devteam
