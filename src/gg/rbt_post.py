@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gg import bugs, git
+from gg.rbt_retry import run_with_retry
 
 _REVIEW_RE = re.compile(r"^Review request #(\d+) posted\.", re.MULTILINE)
 # Matches a tqdm-style progress line: "<label><bar chars> [i/N]".
@@ -133,7 +134,7 @@ def post_one(
 
     # In update mode rbt prompts "Update Review Request #NNN?" -- auto-confirm
     stdin = "yes\n" if (not first_post or review_id) else None
-    r = subprocess.run(cmd, cwd=cwd, input=stdin, capture_output=True, text=True)
+    r = run_with_retry(cmd, cwd=cwd, input=stdin)
     cleaned = clean_output(r.stdout + r.stderr)
 
     if r.returncode != 0:

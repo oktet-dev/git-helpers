@@ -386,3 +386,51 @@ class TestUpdatePublishUnchanged:
         # Still just the one post call; no rbt publish invoked
         publish_calls = [c for c in rbt_mock.calls() if c and c[0] == "publish"]
         assert publish_calls == []
+
+
+class TestRetryOnTransientError:
+    def test_recovers_after_two_207s(
+        self, git_repo: GitRepo, rbt_mock: RbtMock, monkeypatch,
+    ) -> None:
+        # Zero out delays so the test runs in ~0s
+        git_repo._env["GG_RBT_MISSING_BASE_DELAY"] = "0"
+        git_repo._env["GG_RBT_MISSING_BASE_RETRIES"] = "3"
+
+        rbt_mock.queue_failure(
+            output="Error Message: The file was not found in the repository.\n"
+                   "API Code: code: 207\n",
+            returncode=1,
+            count=2,
+        )
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+
+        r = git_repo.run_gg("rbt")
+        assert r.returncode == 0, r.stderr
+        # Three rbt invocations: two failures + one success
+        assert rbt_mock.call_count() == 3
+        # Only one Review request line appears in normal output paths
+        post_calls = [c for c in rbt_mock.calls() if c and c[0] == "post"]
+        assert len(post_calls) == 3
+
+    def test_gives_up_after_4_attempts(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo._env["GG_RBT_RATE_LIMIT_INITIAL_DELAY"] = "0"
+        git_repo._env["GG_RBT_RATE_LIMIT_FACTOR"] = "1"
+        git_repo._env["GG_RBT_RATE_LIMIT_RETRIES"] = "3"
+
+        rbt_mock.queue_failure(
+            output="API Code: code: 114\nError: rate limit\n",
+            returncode=1,
+            count=10,  # more than enough to outlast the retry budget
+        )
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+
+        r = git_repo.run_gg("rbt")
+        assert r.returncode == 1
+        # 4 attempts total: 1 initial + 3 retries
+        assert rbt_mock.call_count() == 4
+        # Error surfaced once (the final failure path)
+        assert "code: 114" in (r.stdout + r.stderr)
