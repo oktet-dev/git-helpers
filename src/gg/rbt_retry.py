@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import os
 import re
+import sys
+import time
 from enum import Enum
+from typing import Callable, TextIO
 
 
 class RetryClass(Enum):
@@ -60,3 +63,54 @@ def missing_base_schedule() -> list[int]:
     retries = _int_env("GG_RBT_MISSING_BASE_RETRIES", 3)
     delay = _int_env("GG_RBT_MISSING_BASE_DELAY", 300)
     return [delay] * retries
+
+
+def _fmt_mmss(seconds: int) -> str:
+    m, s = divmod(max(seconds, 0), 60)
+    return f"{m}m{s:02d}s"
+
+
+def sleep_with_status(
+    seconds: int,
+    *,
+    reason: str,
+    attempt: int,
+    total: int,
+    stream: TextIO | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    now: Callable[[], float] = time.monotonic,
+) -> None:
+    """Sleep ``seconds`` with a status line on ``stream`` (default stderr).
+
+    On a TTY, a single line is updated in place with `\\r` every second
+    showing the remaining countdown. Off-TTY, one line is printed and
+    followed by a single sleep call.
+    """
+    if seconds <= 0:
+        return
+
+    out = stream if stream is not None else sys.stderr
+
+    if not out.isatty():
+        out.write(f"[gg] {reason}; sleeping {seconds}s before retry {attempt}/{total}\n")
+        out.flush()
+        sleep(seconds)
+        return
+
+    deadline = now() + seconds
+    while True:
+        remaining = int(round(deadline - now()))
+        if remaining <= 0:
+            break
+        line = (
+            f"\r[gg] {reason}; retrying {attempt}/{total} "
+            f"in {_fmt_mmss(remaining)} ..."
+        )
+        out.write(line)
+        out.flush()
+        sleep(min(1, remaining))
+    # Replace the countdown line with the "now" frame, then newline
+    final = f"\r[gg] {reason}; retrying {attempt}/{total} now"
+    pad = " " * 20  # overwrite any trailing chars from the longest countdown
+    out.write(final + pad + "\n")
+    out.flush()
