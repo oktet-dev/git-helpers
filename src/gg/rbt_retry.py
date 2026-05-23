@@ -83,8 +83,9 @@ def sleep_with_status(
     """Sleep ``seconds`` with a status line on ``stream`` (default stderr).
 
     On a TTY, a single line is updated in place with `\\r` every second
-    showing the remaining countdown. Off-TTY, one line is printed and
-    followed by a single sleep call.
+    showing the remaining countdown; the TTY check is performed against the
+    resolved stream (``stream`` if given, else ``sys.stderr``). Off-TTY, one
+    line is printed and followed by a single sleep call.
     """
     if seconds <= 0:
         return
@@ -98,6 +99,7 @@ def sleep_with_status(
         return
 
     deadline = now() + seconds
+    last_len = 0
     while True:
         remaining = int(round(deadline - now()))
         if remaining <= 0:
@@ -108,9 +110,10 @@ def sleep_with_status(
         )
         out.write(line)
         out.flush()
+        last_len = len(line)
         sleep(min(1, remaining))
     # Replace the countdown line with the "now" frame, then newline
     final = f"\r[gg] {reason}; retrying {attempt}/{total} now"
-    pad = " " * 20  # overwrite any trailing chars from the longest countdown
+    pad = " " * max(0, last_len - len(final))
     out.write(final + pad + "\n")
     out.flush()

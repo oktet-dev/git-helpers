@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from gg.rbt_retry import RetryClass, classify, rate_limit_schedule, missing_base_schedule
+import io
+
+from gg.rbt_retry import (
+    RetryClass,
+    classify,
+    rate_limit_schedule,
+    missing_base_schedule,
+    sleep_with_status,
+    _fmt_mmss,
+)
 
 
 class TestClassify:
@@ -68,10 +77,6 @@ class TestSchedules:
     def test_missing_base_zero_retries(self, monkeypatch) -> None:
         monkeypatch.setenv("GG_RBT_MISSING_BASE_RETRIES", "0")
         assert missing_base_schedule() == []
-
-
-import io
-from gg.rbt_retry import sleep_with_status
 
 
 class _FakeSleep:
@@ -151,3 +156,14 @@ class TestSleepWithStatus:
         # No sleep, no output
         assert sleep.calls == []
         assert err.getvalue() == ""
+
+
+class TestFmtMmss:
+    def test_zero(self) -> None:
+        assert _fmt_mmss(0) == "0m00s"
+
+    def test_under_minute(self) -> None:
+        assert _fmt_mmss(7) == "0m07s"
+
+    def test_over_minute(self) -> None:
+        assert _fmt_mmss(125) == "2m05s"
