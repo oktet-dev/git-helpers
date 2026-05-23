@@ -280,3 +280,30 @@ class TestRunWithRetry:
         )
         assert r.returncode == 1
         assert len(runner.calls) == 1
+
+
+class TestRbtMockFailureQueue:
+    def test_queued_failure_then_success(
+        self, git_repo, rbt_mock,
+    ) -> None:
+        rbt_mock.queue_failure(
+            output="Error Message: The file was not found in the repository.\n"
+                   "API Code: code: 207\n",
+            returncode=1,
+            count=1,
+        )
+        # First direct call to the mock should fail.
+        r1 = subprocess.run(
+            [str(rbt_mock.script_dir / "rbt"), "post"],
+            capture_output=True, text=True,
+        )
+        assert r1.returncode == 1
+        assert "code: 207" in (r1.stdout + r1.stderr)
+
+        # Second direct call should succeed normally.
+        r2 = subprocess.run(
+            [str(rbt_mock.script_dir / "rbt"), "post"],
+            capture_output=True, text=True,
+        )
+        assert r2.returncode == 0
+        assert "Review request" in r2.stdout
