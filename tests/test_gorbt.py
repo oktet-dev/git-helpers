@@ -434,3 +434,52 @@ class TestRetryOnTransientError:
         assert rbt_mock.call_count() == 4
         # Error surfaced once (the final failure path)
         assert "code: 114" in (r.stdout + r.stderr)
+
+
+class TestForceFlag:
+    def test_force_without_update_errors(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        r = git_repo.run_gg("rbt", "-f")
+        assert r.returncode == 1
+        assert "--force requires --update" in (r.stdout + r.stderr)
+
+    def test_force_ignores_cache_and_posts_all(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        git_repo.commit("BUG-2: second")
+        git_repo.run_gg("rbt")
+        initial = rbt_mock.call_count()
+        assert initial == 2
+
+        # Without -f, -u would skip both as unchanged. With -f, both
+        # post again via --update.
+        r = git_repo.run_gg("rbt", "-u", "-f")
+        assert r.returncode == 0
+        new_calls = rbt_mock.calls()[initial:]
+        assert len(new_calls) == 2
+        for c in new_calls:
+            assert "--update" in c, c
+
+    def test_force_with_publish(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: first")
+        git_repo.run_gg("rbt")
+        initial = rbt_mock.call_count()
+
+        r = git_repo.run_gg("rbt", "-u", "-f", "-p")
+        assert r.returncode == 0
+        new_calls = rbt_mock.calls()[initial:]
+        assert len(new_calls) == 1
+        c = new_calls[0]
+        assert "--update" in c
+        assert "-p" in c
+        # No separate rbt publish invocations
+        publish_calls = [x for x in new_calls if x and x[0] == "publish"]
+        assert publish_calls == []

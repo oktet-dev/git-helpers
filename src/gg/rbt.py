@@ -24,6 +24,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p.add_argument("-G", "--groups", action="append", default=[], help="review group (--target-groups)")
     p.add_argument("-b", "--branch", default=None, help="explicit branch for --branch arg")
     p.add_argument("-u", "--update", action="store_true", help="update existing review requests")
+    p.add_argument("-f", "--force", action="store_true",
+                   help="re-post every commit, ignoring the diff-hash cache (requires -u)")
     p.add_argument("--progress", action="store_true", help="print progress for each patch")
     p.add_argument("-v", "--verbose", action="store_true", help="progress + raw rbt output")
     p.add_argument(
@@ -50,6 +52,10 @@ def run(args: argparse.Namespace) -> int:
     first_post = not args.update
     show_progress = args.progress or args.verbose
 
+    if args.force and not args.update:
+        print("[gg] --force requires --update", file=sys.stderr)
+        return 1
+
     # rbt is not happy with reviewer options passed during update
     reviewers = args.users if first_post else []
     groups = args.groups if first_post else []
@@ -67,7 +73,11 @@ def run(args: argparse.Namespace) -> int:
     depends = args.depends_on
 
     branch_name = git.branchname(cwd=cwd)
-    cached = diff_cache.load_hashes(cwd=cwd, branch=branch_name) if args.update else set()
+    cached = (
+        diff_cache.load_hashes(cwd=cwd, branch=branch_name)
+        if (args.update and not args.force)
+        else set()
+    )
     # Map diff_hash -> review_id so we can publish unchanged drafts directly.
     hash_to_id: dict[str, str] = {}
     if args.update:
