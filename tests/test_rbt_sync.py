@@ -798,3 +798,80 @@ class TestSyncRetry:
         publish_calls = [c for c in rbt_mock.calls() if c and c[0] == "publish"]
         # 4 attempts: 1 initial + 3 retries
         assert len(publish_calls) == 4
+
+
+class TestForceFlag:
+    def test_force_converts_keep_to_update(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+        initial = rbt_mock.call_count()
+
+        r = git_repo.run_gg("rbt-sync", "-f")
+        assert r.returncode == 0
+
+        new_calls = rbt_mock.calls()[initial:]
+        post_calls = [c for c in new_calls if c and c[0] == "post"]
+        # Both kept commits get re-posted with -r <id>
+        assert len(post_calls) == 2
+        for c in post_calls:
+            assert any(arg == "-r" for arg in c), c
+
+    def test_force_keeps_create_and_discard(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("to drop")
+        _post_series(git_repo)
+        initial = rbt_mock.call_count()
+
+        # Drop the second commit; add a new one
+        git_repo.git("reset", "--hard", "HEAD~1")
+        git_repo.commit("new feature")
+
+        r = git_repo.run_gg("rbt-sync", "-f")
+        assert r.returncode == 0
+
+        new_calls = rbt_mock.calls()[initial:]
+        post_calls = [c for c in new_calls if c and c[0] == "post"]
+        close_calls = [c for c in new_calls if c and c[0] == "close"]
+        # 1 forced update (the kept "fix crash") + 1 create (the new commit)
+        assert len(post_calls) == 2
+        # 1 discard of the dropped review
+        assert len(close_calls) == 1
+
+    def test_force_with_publish_publishes_each(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+        initial = rbt_mock.call_count()
+
+        r = git_repo.run_gg("rbt-sync", "-f", "-p")
+        assert r.returncode == 0
+
+        new_calls = rbt_mock.calls()[initial:]
+        post_calls = [c for c in new_calls if c and c[0] == "post"]
+        publish_calls = [c for c in new_calls if c and c[0] == "publish"]
+        # 2 forced re-posts, each with -p
+        assert len(post_calls) == 2
+        for c in post_calls:
+            assert "-p" in c, c
+        # No separate rbt publish calls (UPDATE+-p covers it)
+        assert publish_calls == []
+
+    def test_force_header_appears_in_plan(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        _post_series(git_repo)
+        r = git_repo.run_gg("rbt-sync", "-f", "-d")
+        assert r.returncode == 0
+        assert "Force: yes" in r.stdout

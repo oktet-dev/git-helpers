@@ -45,6 +45,7 @@ def format_plan(
     publish: bool = False,
     reviewers: list[str] | None = None,
     groups: list[str] | None = None,
+    force: bool = False,
 ) -> str:
     """Format sync actions as a human-readable plan table."""
     numbered = assign_numbers(actions, renumber=renumber)
@@ -55,6 +56,9 @@ def format_plan(
     else:
         header = f"{'#':<10} {'Action':<12} {'Review':<10} Subject"
     lines = _format_reviewer_header(reviewers or [], groups or [])
+    if force:
+        lines.append("Force: yes")
+        lines.append("")
     lines.append(header)
     lines.append("-" * len(header))
 

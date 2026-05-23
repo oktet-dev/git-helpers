@@ -24,6 +24,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p = subparsers.add_parser("rbt-sync", help="reconcile commit series with ReviewBoard")
     p.add_argument("-d", "--dry", action="store_true", help="plan only, don't execute")
     p.add_argument("-i", "--interactive", action="store_true", help="edit plan before executing")
+    p.add_argument("-f", "--force", action="store_true",
+                   help="re-post every matched commit, ignoring diff hash")
     p.add_argument("--renumber", action="store_true", help="full renumber instead of fractional")
     p.add_argument("-p", "--publish", action="store_true", help="publish new/updated requests")
     p.add_argument("-v", "--verbose", action="store_true", help="show rbt output")
@@ -242,10 +244,20 @@ def run(args: argparse.Namespace) -> int:
             return 0
         actions = edited
 
+    # --force: re-post every matched commit, ignoring diff hash.
+    # Runs AFTER the interactive editor so the user can still skip
+    # individual entries from the plan.
+    if args.force:
+        for a in actions:
+            if a.kind in (ActionKind.KEEP, ActionKind.KEEP_DEP):
+                a.kind = ActionKind.UPDATE
+                a.needs_dep_update = False
+
     # Show plan
     plan = format_plan(
         actions, renumber=args.renumber, publish=args.publish,
         reviewers=args.users, groups=args.groups,
+        force=args.force,
     )
     print(plan)
 
