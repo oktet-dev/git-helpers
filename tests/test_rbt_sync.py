@@ -773,3 +773,28 @@ class TestSyncRetry:
         assert r.returncode == 0
         publish_calls = [c for c in rbt_mock.calls() if c and c[0] == "publish"]
         assert len(publish_calls) == 2
+
+    def test_keep_publish_gives_up_after_4_attempts(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo._env["GG_RBT_MISSING_BASE_DELAY"] = "0"
+        git_repo._env["GG_RBT_MISSING_BASE_RETRIES"] = "3"
+
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        _post_series(git_repo)
+
+        rbt_mock.queue_failure(
+            output="Error Message: The file was not found in the repository.\n"
+                   "API Code: code: 207\n",
+            returncode=1,
+            count=10,
+        )
+        r = git_repo.run_gg("rbt-sync", "-p")
+        # rbt-sync's KEEP branch calls publish_one without propagating its
+        # exit code (current behavior), so the overall command may still
+        # succeed even when publish fails. But the 4 attempts must have
+        # been made.
+        publish_calls = [c for c in rbt_mock.calls() if c and c[0] == "publish"]
+        # 4 attempts: 1 initial + 3 retries
+        assert len(publish_calls) == 4
