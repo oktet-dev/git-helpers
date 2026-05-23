@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 import time
 from enum import Enum
+from pathlib import Path
 from typing import Callable, TextIO
 
 
@@ -117,3 +119,62 @@ def sleep_with_status(
     pad = " " * max(0, last_len - len(final))
     out.write(final + pad + "\n")
     out.flush()
+
+
+_REASON = {
+    RetryClass.RATE_LIMIT: "rate-limited",
+    RetryClass.MISSING_BASE: "base commit not yet in RB mirror",
+}
+
+
+def _pick_schedule(cls: RetryClass) -> list[int]:
+    if cls is RetryClass.RATE_LIMIT:
+        return rate_limit_schedule()
+    if cls is RetryClass.MISSING_BASE:
+        return missing_base_schedule()
+    return []
+
+
+def run_with_retry(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    input: str | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    sleep: Callable[[float], None] = time.sleep,
+    status_stream: TextIO | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run ``cmd``, retrying on classified transient ReviewBoard errors.
+
+    Schedule is locked at the first transient hit -- a class flip
+    mid-loop keeps the original budget. Returns the last
+    ``CompletedProcess`` (success, exhausted retries, or FATAL).
+    """
+    schedule: list[int] | None = None
+    total_attempts = 1
+
+    while True:
+        r = runner(
+            cmd, cwd=cwd, input=input, capture_output=True, text=True,
+        )
+        cls = classify(r.returncode, (r.stdout or "") + (r.stderr or ""))
+        if cls in (RetryClass.OK, RetryClass.FATAL):
+            return r
+
+        if schedule is None:
+            schedule = _pick_schedule(cls)
+            total_attempts = 1 + len(schedule)
+
+        if not schedule:
+            return r
+
+        delay = schedule.pop(0)
+        attempt = total_attempts - len(schedule)
+        sleep_with_status(
+            delay,
+            reason=_REASON[cls],
+            attempt=attempt,
+            total=total_attempts,
+            stream=status_stream,
+            sleep=sleep,
+        )

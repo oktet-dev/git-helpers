@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import subprocess
 
 from gg.rbt_retry import (
     RetryClass,
@@ -11,6 +12,7 @@ from gg.rbt_retry import (
     missing_base_schedule,
     sleep_with_status,
     _fmt_mmss,
+    run_with_retry,
 )
 
 
@@ -167,3 +169,114 @@ class TestFmtMmss:
 
     def test_over_minute(self) -> None:
         assert _fmt_mmss(125) == "2m05s"
+
+
+def _proc(returncode: int, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=["rbt", "post"], returncode=returncode, stdout=stdout, stderr=stderr,
+    )
+
+
+class _ScriptedRunner:
+    """Returns a queued CompletedProcess on each call; records calls."""
+
+    def __init__(self, results: list[subprocess.CompletedProcess[str]]) -> None:
+        self._results = list(results)
+        self.calls: list[list[str]] = []
+
+    def __call__(
+        self, cmd: list[str], *, cwd=None, capture_output: bool = True,
+        text: bool = True, input: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        self.calls.append(cmd)
+        return self._results.pop(0)
+
+
+class TestRunWithRetry:
+    def test_ok_returns_without_sleep(self, monkeypatch) -> None:
+        monkeypatch.delenv("GG_RBT_RATE_LIMIT_RETRIES", raising=False)
+        runner = _ScriptedRunner([_proc(0, stdout="Review request #1 posted.\n")])
+        sleep = _FakeSleep()
+        r = run_with_retry(["rbt", "post"], runner=runner, sleep=sleep)
+        assert r.returncode == 0
+        assert sleep.calls == []
+        assert len(runner.calls) == 1
+
+    def test_fatal_returns_without_sleep(self, monkeypatch) -> None:
+        runner = _ScriptedRunner([_proc(1, stderr="Authentication failed\n")])
+        sleep = _FakeSleep()
+        r = run_with_retry(["rbt", "post"], runner=runner, sleep=sleep)
+        assert r.returncode == 1
+        assert sleep.calls == []
+        assert len(runner.calls) == 1
+
+    def test_rate_limit_uses_schedule(self, monkeypatch) -> None:
+        monkeypatch.setenv("GG_RBT_RATE_LIMIT_RETRIES", "3")
+        monkeypatch.setenv("GG_RBT_RATE_LIMIT_INITIAL_DELAY", "10")
+        monkeypatch.setenv("GG_RBT_RATE_LIMIT_FACTOR", "3")
+        # 4 attempts, all rate-limit. With non-TTY status_stream each
+        # retry sleeps exactly once with the scheduled delay.
+        rl = "API Code: code: 114\n"
+        runner = _ScriptedRunner([_proc(1, stderr=rl) for _ in range(4)])
+        sleep = _FakeSleep()
+        status = io.StringIO()  # isatty() == False
+        r = run_with_retry(
+            ["rbt", "post"], runner=runner, sleep=sleep, status_stream=status,
+        )
+        assert r.returncode == 1
+        assert len(runner.calls) == 4
+        assert sleep.calls == [10, 30, 90]
+
+    def test_recovery_on_third_attempt(self, monkeypatch) -> None:
+        monkeypatch.setenv("GG_RBT_RATE_LIMIT_INITIAL_DELAY", "0")
+        monkeypatch.setenv("GG_RBT_RATE_LIMIT_FACTOR", "1")
+        rl = "API Code: code: 114\n"
+        runner = _ScriptedRunner([
+            _proc(1, stderr=rl),
+            _proc(1, stderr=rl),
+            _proc(0, stdout="Review request #1 posted.\n"),
+        ])
+        sleep = _FakeSleep()
+        status = io.StringIO()
+        r = run_with_retry(
+            ["rbt", "post"], runner=runner, sleep=sleep, status_stream=status,
+        )
+        assert r.returncode == 0
+        assert len(runner.calls) == 3
+
+    def test_class_flip_keeps_original_schedule(self, monkeypatch) -> None:
+        """First transient is 114; later attempts return 207. The
+        helper must stay on the rate-limit schedule and not refresh
+        the budget."""
+        monkeypatch.setenv("GG_RBT_RATE_LIMIT_RETRIES", "2")
+        monkeypatch.setenv("GG_RBT_RATE_LIMIT_INITIAL_DELAY", "0")
+        monkeypatch.setenv("GG_RBT_RATE_LIMIT_FACTOR", "1")
+        monkeypatch.setenv("GG_RBT_MISSING_BASE_RETRIES", "5")  # would be ignored
+        monkeypatch.setenv("GG_RBT_MISSING_BASE_DELAY", "0")
+        rl = "API Code: code: 114\n"
+        mb = "API Code: code: 207\n"
+        # Initial 114, then 207, 207 -- helper picks rate-limit schedule
+        # of length 2, so 3 calls total (1 + 2 retries) then gives up.
+        runner = _ScriptedRunner([
+            _proc(1, stderr=rl),
+            _proc(1, stderr=mb),
+            _proc(1, stderr=mb),
+        ])
+        sleep = _FakeSleep()
+        status = io.StringIO()
+        r = run_with_retry(
+            ["rbt", "post"], runner=runner, sleep=sleep, status_stream=status,
+        )
+        assert r.returncode == 1
+        assert len(runner.calls) == 3
+
+    def test_zero_retries_returns_first_failure(self, monkeypatch) -> None:
+        monkeypatch.setenv("GG_RBT_RATE_LIMIT_RETRIES", "0")
+        runner = _ScriptedRunner([_proc(1, stderr="API Code: code: 114\n")])
+        sleep = _FakeSleep()
+        status = io.StringIO()
+        r = run_with_retry(
+            ["rbt", "post"], runner=runner, sleep=sleep, status_stream=status,
+        )
+        assert r.returncode == 1
+        assert len(runner.calls) == 1
