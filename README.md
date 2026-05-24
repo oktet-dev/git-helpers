@@ -149,10 +149,14 @@ git gorbt -p -U kostik
 
 ### Syncing a modified series
 
-After posting a multi-patch series, you amend/reorder/add/drop commits
-or just edit commit messages and want to update ReviewBoard to match.
-A commit whose subject or body changed is re-posted even if the diff
-is unchanged, so RB's summary and description track the git commit:
+`gg rbt-sync` is the everyday command. The first run on a branch
+posts the series fresh (it auto-detects an empty `reviews.db` and
+prints `[gg] No existing reviews; posting as a fresh series.`).
+Subsequent runs reconcile the current commits against the last
+posted set — amend/reorder/add/drop commits and re-run to update
+ReviewBoard to match. A commit whose subject or body changed is
+re-posted even if the diff is unchanged, so RB's summary and
+description track the git commit:
 
 ```shell
 # See what changed

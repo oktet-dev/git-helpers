@@ -49,7 +49,7 @@ Per-repo state lives in `.gg/reviews.db` (SQLite, WAL mode) at the repo root, ke
 
 ### Workflow pattern
 
-`gowork` creates a tracking branch -> make commits -> `gg rbt` or `gg rbt-sync` (or `gopr`) for review -> `gopull` to rebase -> `gopush` to land -> `goclose` to clean up.
+`gowork` creates a tracking branch -> make commits -> `gg rbt-sync` (or `gopr`) for review -> `gopull` to rebase -> `gopush` to land -> `goclose` to clean up.
 
 ## Testing
 
