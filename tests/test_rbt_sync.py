@@ -162,14 +162,51 @@ class TestSyncExecution:
         has_close = any("close" in c for c in new_calls)
         assert has_close
 
-    def test_no_existing_reviews_errors(
+    def test_no_existing_reviews_auto_new(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
     ) -> None:
+        """Empty reviews.db: `gg rbt-sync -d` auto-falls into --new."""
         git_repo.create_branch("feature", "master")
         git_repo.commit("fix crash")
         r = git_repo.run_gg("rbt-sync", "-d")
-        assert r.returncode == 1
-        assert "No existing reviews" in r.stdout
+        assert r.returncode == 0
+        # Plan shows the commit as a CREATE
+        assert "create" in r.stdout
+        # Stderr notice on the auto path
+        assert "No existing reviews; posting as a fresh series" in r.stderr
+
+    def test_auto_new_executes(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """Empty reviews.db: non-dry `gg rbt-sync` posts every commit."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0
+
+        post_calls = [c for c in rbt_mock.calls() if c and c[0] == "post"]
+        assert len(post_calls) == 2
+
+        # reviews.db now has two entries
+        from gg import review_store
+        entries = review_store.load_reviews("feature", cwd=git_repo.work_dir)
+        assert len(entries) == 2
+
+    def test_explicit_new_no_auto_notice(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """`--new` with populated DB does not emit the auto-new notice."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        _post_series(git_repo)
+
+        # Add one more commit so the explicit --new has something to replace
+        git_repo.commit("new feature")
+        r = git_repo.run_gg("rbt-sync", "--new", "-d")
+        assert r.returncode == 0
+        assert "No existing reviews; posting as a fresh series" not in r.stderr
 
     def test_create_posts_new_review(
         self, git_repo: GitRepo, rbt_mock: RbtMock,

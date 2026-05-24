@@ -231,8 +231,11 @@ def run(args: argparse.Namespace) -> int:
 
     old = review_store.load_reviews(branch_name, cwd=cwd)
     if not old and not args.new:
-        print("No existing reviews found. Use `gg rbt` to post the initial series.")
-        return 1
+        print(
+            "[gg] No existing reviews; posting as a fresh series.",
+            file=sys.stderr,
+        )
+        args.new = True
 
     new = _build_new_commits(revs, cwd=cwd)
     actions = reconcile([] if args.new else old, new)

@@ -212,10 +212,10 @@ class TestImport:
         r = git_repo.run_gg("rbt-import", "-d", "600")
         assert r.returncode == 0
 
-        # Verify DB is empty -- rbt-sync should fail
+        # Verify DB is empty -- rbt-sync should auto-apply --new
         r2 = git_repo.run_gg("rbt-sync", "-d")
-        assert r2.returncode == 1
-        assert "No existing reviews" in r2.stdout
+        assert r2.returncode == 0
+        assert "No existing reviews; posting as a fresh series" in r2.stderr
 
     def test_overwrite_warning(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
