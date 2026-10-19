@@ -464,6 +464,26 @@ def _make_clear_editor(tmp_path) -> str:
 
 
 class TestInteractiveMode:
+    def test_interactive_parse_error_exits_cleanly(
+        self, git_repo: GitRepo, rbt_mock: RbtMock, tmp_path,
+    ) -> None:
+        """A stray separator is reported; nothing is posted."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+        initial_calls = rbt_mock.call_count()
+        git_repo.commit("another")
+
+        git_repo._env["EDITOR"] = _make_editor_script(tmp_path, "1i\\\n---")
+        git_repo._env.pop("VISUAL", None)
+
+        r = git_repo.run_gg("rbt-sync", "-i")
+        assert r.returncode == 1
+        assert "[gg]" in r.stderr
+        assert "Traceback" not in r.stderr
+        assert rbt_mock.call_count() == initial_calls
+
     def test_interactive_skip_discard(
         self, git_repo: GitRepo, rbt_mock: RbtMock, tmp_path,
     ) -> None:

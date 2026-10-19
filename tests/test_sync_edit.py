@@ -433,3 +433,21 @@ class TestSeparators:
         text = serialize_plan(plan, separators=False)
         assert "hid" not in text
         assert parse_plan(text, plan, separators=False).series[0].actions[1] is hidden
+
+    def test_range_round_trip_keeps_series(self) -> None:
+        plan = _plan([_keep("1", "a")], [_keep("2", "b", pos=1)])
+        text = serialize_plan(plan, separators=False)
+        out = parse_plan(text, plan, separators=False)
+        assert [len(s.actions) for s in out.series] == [1, 1]
+        assert _kinds(out) == [ActionKind.KEEP, ActionKind.KEEP]
+
+    def test_range_kind_edit_changes_only_that_row(self) -> None:
+        plan = _plan([_keep("1", "a")], [_keep("2", "b", pos=1)])
+        lines = serialize_plan(plan, separators=False).splitlines()
+        text = "\n".join(
+            "update" + l[len("keep"):] if l.startswith("keep ") and l.endswith(" b") else l
+            for l in lines
+        )
+        out = parse_plan(text, plan, separators=False)
+        assert [s.number for s in out.series] == [1, 2]
+        assert _kinds(out) == [ActionKind.KEEP, ActionKind.UPDATE]

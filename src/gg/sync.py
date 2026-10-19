@@ -303,9 +303,13 @@ def run(args: argparse.Namespace) -> int:
         )
 
     if args.interactive:
-        edited = edit_plan(
-            plan, renumber=args.renumber, separators=args.range is None,
-        )
+        try:
+            edited = edit_plan(
+                plan, renumber=args.renumber, separators=args.range is None,
+            )
+        except ValueError as e:
+            print(f"[gg] {e}", file=sys.stderr)
+            return 1
         if edited is None:
             print("Aborted.")
             return 0

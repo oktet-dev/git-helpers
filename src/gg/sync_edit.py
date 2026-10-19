@@ -199,7 +199,7 @@ def parse_plan(
     ]
     new_by_id = {id(o): n for o, n in zip(originals, edited)}
 
-    groups = _regroup(plan, new_by_id, cuts)
+    groups = _regroup(plan, new_by_id, cuts, separators)
     gone = [
         GoneGroup(g.old_number, [new_by_id[id(a)] for a in g.actions])
         for g in plan.gone
@@ -229,8 +229,16 @@ def _apply_line(i: int, line: str, orig: SyncAction) -> SyncAction:
 
 def _regroup(
     plan: SeriesPlan, new_by_id: dict[int, SyncAction], cuts: list[int],
+    separators: bool,
 ) -> list[list[SyncAction]]:
-    """Cut the live rows at the separators; hidden rows join the row before."""
+    """Group the rows into series.
+
+    Without separators membership never changes: each original series is
+    one group. Otherwise the groups are cut at the separators and hidden
+    rows join the row before.
+    """
+    if not separators:
+        return [[new_by_id.get(id(a), a) for a in s.actions] for s in plan.series]
     groups: list[list[SyncAction]] = [[]]
     seen = 0
     for s in plan.series:
