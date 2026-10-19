@@ -27,6 +27,7 @@ class ReviewEntry:
     review_id: str
     subject: str
     diff_hash: str
+    series: int = 1
 
 
 def _db_path(*, cwd: Path | None = None) -> Path:
@@ -45,6 +46,7 @@ def _connect(*, cwd: Path | None = None) -> sqlite3.Connection:
             review_id TEXT NOT NULL,
             subject TEXT NOT NULL,
             diff_hash TEXT NOT NULL,
+            series INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (branch, position)
         );
         CREATE TABLE IF NOT EXISTS diff_hashes (
@@ -53,6 +55,12 @@ def _connect(*, cwd: Path | None = None) -> sqlite3.Connection:
             PRIMARY KEY (branch, diff_hash)
         );
     """)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(reviews)")}
+    if "series" not in columns:
+        conn.execute(
+            "ALTER TABLE reviews ADD COLUMN series INTEGER NOT NULL DEFAULT 1"
+        )
+        conn.commit()
     return conn
 
 
@@ -64,7 +72,7 @@ def load_reviews(branch: str, *, cwd: Path | None = None) -> list[ReviewEntry]:
     conn = _connect(cwd=cwd)
     try:
         rows = conn.execute(
-            "SELECT branch, position, review_id, subject, diff_hash "
+            "SELECT branch, position, review_id, subject, diff_hash, series "
             "FROM reviews WHERE branch = ? AND review_id != '' ORDER BY position",
             (branch,),
         ).fetchall()
@@ -86,9 +94,13 @@ def save_reviews(entries: list[ReviewEntry], *, cwd: Path | None = None) -> None
     try:
         conn.execute("DELETE FROM reviews WHERE branch = ?", (branch,))
         conn.executemany(
-            "INSERT INTO reviews (branch, position, review_id, subject, diff_hash) "
-            "VALUES (?, ?, ?, ?, ?)",
-            [(e.branch, e.position, e.review_id, e.subject, e.diff_hash) for e in entries],
+            "INSERT INTO reviews "
+            "(branch, position, review_id, subject, diff_hash, series) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (e.branch, e.position, e.review_id, e.subject, e.diff_hash, e.series)
+                for e in entries
+            ],
         )
         conn.commit()
     finally:

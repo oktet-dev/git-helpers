@@ -35,7 +35,10 @@ def _run_list(branch: str) -> int:
     if reviews:
         print(f"Reviews ({len(reviews)}):")
         for r in reviews:
-            print(f"  #{r.position}  r/{r.review_id}  {r.subject}  {r.diff_hash[:8]}")
+            print(
+                f"  #{r.position}  s{r.series}  r/{r.review_id}  {r.subject}  "
+                f"{r.diff_hash[:8]}"
+            )
     else:
         print("Reviews: none")
 

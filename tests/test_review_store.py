@@ -40,6 +40,32 @@ class TestReviewCRUD:
         assert loaded[0].review_id == "1000"
         assert loaded[1].subject == "add tests"
 
+    def test_series_round_trip(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        entries = [
+            ReviewEntry("feature", 1, "1000", "a", "aaa", series=1),
+            ReviewEntry("feature", 2, "1001", "b", "bbb", series=2),
+        ]
+        review_store.save_reviews(entries, cwd=git_repo.work_dir)
+        loaded = review_store.load_reviews("feature", cwd=git_repo.work_dir)
+        assert [e.series for e in loaded] == [1, 2]
+
+    def test_old_schema_gets_series_column(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        db = git_repo.work_dir / ".gg" / "reviews.db"
+        db.parent.mkdir()
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "CREATE TABLE reviews (branch TEXT NOT NULL, position INTEGER NOT NULL, "
+            "review_id TEXT NOT NULL, subject TEXT NOT NULL, diff_hash TEXT NOT NULL, "
+            "PRIMARY KEY (branch, position))"
+        )
+        conn.execute("INSERT INTO reviews VALUES ('feature', 1, '1000', 'a', 'aaa')")
+        conn.commit()
+        conn.close()
+        loaded = review_store.load_reviews("feature", cwd=git_repo.work_dir)
+        assert [(e.review_id, e.series) for e in loaded] == [("1000", 1)]
+
     def test_save_replaces(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
         entries1 = [ReviewEntry("feature", 1, "1000", "old", "aaa")]
         review_store.save_reviews(entries1, cwd=git_repo.work_dir)

@@ -27,6 +27,14 @@ class TestList:
         assert "r/1001" in result.stdout
         assert "Diff hashes: 2 cached" in result.stdout
 
+    def test_list_shows_series(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        review_store.save_reviews(
+            [ReviewEntry("master", 1, "1000", "a", "aaaaaaaa", series=2)],
+            cwd=git_repo.work_dir,
+        )
+        result = git_repo.run_gg("db")
+        assert "s2  r/1000" in result.stdout
+
     def test_no_data(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
         git_repo.create_branch("empty-branch")
         result = git_repo.run_gg("db")
