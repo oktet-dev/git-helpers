@@ -236,6 +236,10 @@ depends on the last patch of the series below it.
   commits out. After a real run, if the source branch no longer exists
   in git, the reviews picked up from it are removed from its record (and
   the record goes once nothing is left); otherwise both keep them.
+  Picking up reviews from a branch that no longer exists prints a `[gg]`
+  warning: its record may be left over from a branch that landed, so
+  check those reviews are still open (`gg db --clear -b <branch>`
+  forgets them).
 - **Gone commits.** A posted commit that is no longer on the branch is
   - `forget` -- another existing branch still records its review: it is
     dropped from this branch's record and **not** closed;

@@ -131,7 +131,9 @@ def build_plan(
     _hold_outside_range(rows, in_range)
     _rank_live(rows, own, foreign)
     series = _number(rows)
-    gone = _gone(branch, unmatched, foreign, landed_subjects, branch_exists)
+    exists = cache(branch_exists)
+    gone = _gone(branch, unmatched, foreign, landed_subjects, exists)
+    warnings += _deleted_origin_warnings(rows, exists)
     submitted = {
         a.old_entry.review_id
         for group in gone for a in group.actions if a.kind == ActionKind.SUBMIT
@@ -420,13 +422,14 @@ def _gone(
         if name != branch:
             for entry in foreign[name]:
                 recorded_on.setdefault(entry.review_id, {})[name] = None
-    exists = cache(branch_exists)
     landed: set[str] | None = None
 
     groups: dict[int, list[SyncAction]] = {}
     for source in sorted(unmatched, key=lambda s: s.entry.position):
         entry = source.entry
-        holder = next((b for b in recorded_on.get(entry.review_id, {}) if exists(b)), None)
+        holder = next(
+            (b for b in recorded_on.get(entry.review_id, {}) if branch_exists(b)), None,
+        )
         if holder is not None:
             kind = ActionKind.FORGET
         else:
@@ -443,6 +446,27 @@ def _gone(
             old_rank=source.rank,
         ))
     return [GoneGroup(number, groups[number]) for number in sorted(groups)]
+
+
+def _deleted_origin_warnings(
+    rows: list[_Row], branch_exists: Callable[[str], bool],
+) -> list[str]:
+    """A warning per branch no longer in git whose reviews are picked up.
+
+    Its record may be left over from a landed or abandoned branch, so a
+    reused subject could attach a commit to an old, closed review.
+    """
+    picked: dict[str, list[str]] = {}
+    for row in rows:
+        if row.source and row.source.origin:
+            picked.setdefault(row.source.origin, []).append(row.source.entry.review_id)
+    return [
+        f"picking up {', '.join(f'r/{rid}' for rid in ids)} from '{name}', which no "
+        f"longer exists — check they are still open (gg db --clear -b {name} to "
+        "forget them)"
+        for name, ids in picked.items()
+        if not branch_exists(name)
+    ]
 
 
 def _chain(

@@ -304,6 +304,23 @@ def test_foreign_entry_joining_own_series_counts_its_reviews():
     assert labels(plan) == [["[1/3]", "[2/3]", "[3/3]"]]
 
 
+def test_pick_up_from_deleted_branch_warns():
+    foreign = {
+        "old-landed": [entry("old-landed", 1, "500", "tests: fix build"),
+                       entry("old-landed", 2, "501", "tests: fix the fix")],
+        "live": [entry("live", 1, "600", "feat: c")],
+    }
+    commits = [commit(s) for s in ("feat: a", "tests: fix build", "tests: fix the fix", "feat: c")]
+    plan = plan_of([], commits, foreign=foreign, live={"live"})
+    assert members(plan) == [(1, ["feat: a", "tests: fix build", "tests: fix the fix"]),
+                             (2, ["feat: c"])]
+    assert plan.warnings == [
+        "picking up r/500, r/501 from 'old-landed', which no longer exists — check they "
+        "are still open (gg db --clear -b old-landed to forget them)"
+    ]
+    assert plan_of([], commits, foreign=foreign, live={"live", "old-landed"}).warnings == []
+
+
 def test_lookups_lazy_and_once():
     calls = []
 

@@ -1049,6 +1049,16 @@ class TestSeries:
         assert git_repo.run_gg("rbt-sync", "master..HEAD~1").returncode == 0
         assert "base" not in review_store.list_branches(cwd=git_repo.work_dir)
 
+    def test_pick_up_from_deleted_branch_warns(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._stack(git_repo)
+        base_ids = self._ids(git_repo, "base")
+        git_repo.git("branch", "-D", "base")
+        r = git_repo.run_gg("rbt-sync", "-d")
+        assert (
+            f"[gg] picking up r/{base_ids[0]}, r/{base_ids[1]} from 'base', which no longer "
+            "exists — check they are still open (gg db --clear -b base to forget them)\n"
+        ) in r.stderr
+
     def test_range_off_branch_refused(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
         self._stack(git_repo)
         git_repo.git("checkout", "-b", "side", "master")
