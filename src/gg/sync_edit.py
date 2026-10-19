@@ -29,6 +29,7 @@ _EMACS_NAMES = frozenset({"emacs", "emacs-nox", "xemacs", "emacsclient"})
 _BASE_HEADER = """\
 # gg rbt-sync -- edit the Action column, then save and quit.
 # Empty file = abort. Lines starting with # are ignored.
+# Do not reorder or delete rows; change the action word only.
 #
 # Valid actions: keep, update, create, discard, submit, forget, skip
 #   update  -> keep     don't re-post, preserve existing review

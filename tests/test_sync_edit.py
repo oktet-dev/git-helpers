@@ -327,6 +327,11 @@ class TestMakeHeader:
         header = _make_header("/usr/local/bin/nvim")
         assert "Shortcuts (vim):" in header
 
+    def test_headers_say_rows_stay_in_place(self) -> None:
+        for separators in (True, False):
+            header = _make_header("", separators=separators)
+            assert "# Do not reorder or delete rows; change the action word only.\n" in header
+
 
 class TestSerializeWithEditor:
     def test_roundtrip_with_vim(self) -> None:
