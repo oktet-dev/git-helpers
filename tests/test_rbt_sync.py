@@ -6,6 +6,7 @@ import subprocess
 import sys
 import textwrap
 
+from gg import review_store
 from tests.conftest import GitRepo, RbtMock
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -236,15 +237,20 @@ class TestSyncExecution:
         _post_series(git_repo)
         initial_calls = rbt_mock.call_count()
 
-        # Add a third commit — old series was [1/2],[2/2], new is [1/3]..[3/3]
+        # Insert a commit inside the series (one added on top would start a
+        # new series) — old series was [1/2],[2/2], new is [1/3]..[3/3]
+        add_tests = git_repo.git("rev-parse", "HEAD").stdout.strip()
+        git_repo.git("reset", "--hard", "HEAD~1")
         git_repo.commit("new feature")
+        git_repo.git("cherry-pick", add_tests)
 
         r = git_repo.run_gg("rbt-sync", "--renumber")
         assert r.returncode == 0
         all_calls = rbt_mock.calls()[initial_calls:]
         post_calls = [c for c in all_calls if c and c[0] == "post"]
-        # 2 re-posts (stale prefix) + 1 create = 3 rbt post calls
+        # 2 re-posts (stale prefix; the second also re-chains) + 1 create
         assert len(post_calls) == 3
+        assert any("--summary=[1/3]: fix crash" in c for c in post_calls)
 
     def test_renumber_skips_matching_prefix(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
@@ -942,3 +948,117 @@ class TestForceFlag:
         r = git_repo.run_gg("rbt-sync", "-f", "-d")
         assert r.returncode == 0
         assert "Force: yes" in r.stdout
+
+
+class TestSeries:
+    def _stack(self, git_repo: GitRepo) -> None:
+        """base: s1,s2 posted; stack = base + c1,c2 + n1."""
+        git_repo.create_branch("base", "master")
+        git_repo.commit("s1")
+        git_repo.commit("s2")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        git_repo.git("checkout", "-b", "stack", "--track", "master")
+        git_repo.git("merge", "--ff-only", "base")
+        git_repo.commit("c1")
+        git_repo.commit("c2")
+        git_repo.commit("n1")
+
+    def _ids(self, git_repo: GitRepo, branch: str = "stack") -> list[str]:
+        return [e.review_id for e in review_store.load_reviews(branch, cwd=git_repo.work_dir)]
+
+    def test_stacked_branch_shows_series(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._stack(git_repo)
+        base_ids = self._ids(git_repo, "base")
+        assert git_repo.run_gg("rbt-sync", "master..HEAD~1").returncode == 0
+        ids = self._ids(git_repo)  # s1, s2 (adopted), c1, c2
+        assert ids[:2] == base_ids
+        out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
+        assert "Series 1: 2 patches" in out
+        assert f"Series 2: 2 patches, depends on r/{ids[1]}" in out
+        assert f"Series 3: 1 patch, new, depends on r/{ids[3]}" in out
+        assert re.search(r"\[1/1\]\s+create", out)
+
+    def test_range_without_saved_series_keeps_them(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._stack(git_repo)
+        git_repo.run_gg("rbt-sync", "master..HEAD~1")
+        r = git_repo.run_gg("rbt-sync", "HEAD~1..HEAD")
+        assert r.returncode == 0, r.stderr
+        assert not [c for c in rbt_mock.calls() if c and c[0] == "close"]
+        posts = [c for c in rbt_mock.calls() if c and c[0] == "post"]
+        assert "--summary=[1/1]: n1" in posts[-1]
+
+    def test_landed_series_submitted(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._stack(git_repo)
+        git_repo.run_gg("rbt-sync", "master..HEAD~1")
+        ids = self._ids(git_repo)
+        git_repo.git("checkout", "master")
+        git_repo.git("merge", "--ff-only", "base")
+        git_repo.git("push", "origin", "master")
+        git_repo.git("branch", "-D", "base")
+        git_repo.git("checkout", "stack")
+        r = git_repo.run_gg("rbt-sync", "-d")
+        assert "landed in" in r.stdout and "submit" in r.stdout
+        git_repo.run_gg("rbt-sync")
+        closes = [c for c in rbt_mock.calls() if c and c[0] == "close"]
+        assert ["close", "--close-type=submitted", ids[0]] in closes
+
+    def test_dropped_shared_series_forgotten(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._stack(git_repo)
+        git_repo.run_gg("rbt-sync", "master..HEAD~1")
+        git_repo.git("rebase", "--onto", "master", "base", "stack")
+        r = git_repo.run_gg("rbt-sync")
+        assert "forget" in r.stdout
+        assert not [c for c in rbt_mock.calls() if c and c[0] == "close"]
+
+    def test_record_of_deleted_source_branch_cleared(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._stack(git_repo)
+        git_repo.git("branch", "-D", "base")
+        assert git_repo.run_gg("rbt-sync", "master..HEAD~1").returncode == 0
+        assert "base" not in review_store.list_branches(cwd=git_repo.work_dir)
+
+    def test_range_off_branch_refused(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._stack(git_repo)
+        git_repo.git("checkout", "-b", "side", "master")
+        git_repo.commit("elsewhere")
+        git_repo.git("checkout", "stack")
+        calls = rbt_mock.call_count()
+        r = git_repo.run_gg("rbt-sync", "master..side")
+        assert r.returncode == 1 and "not on 'stack'" in r.stderr
+        assert rbt_mock.call_count() == calls
+
+    def test_out_of_range_change_detected_later(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._stack(git_repo)
+        git_repo.run_gg("rbt-sync", "master..HEAD~1")
+        c1_id = self._ids(git_repo)[2]
+        c1 = git_repo.git("rev-parse", "HEAD~2").stdout.strip()
+        (git_repo.work_dir / "c1-extra").write_text("x\n")
+        git_repo.git("add", "c1-extra")
+        git_repo.git("commit", "--fixup", c1)
+        git_repo.git("-c", "sequence.editor=:", "rebase", "-i", "--autosquash", "master")
+        assert git_repo.run_gg("rbt-sync", "HEAD~1..HEAD").returncode == 0
+        out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
+        assert re.search(rf"\[1/2\]\s+update\s+\S+\s+r/{c1_id}\s+c1", out)
+
+    def test_force_respects_range(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._stack(git_repo)
+        git_repo.run_gg("rbt-sync", "master..HEAD~1")
+        calls = rbt_mock.call_count()
+        git_repo.run_gg("rbt-sync", "-f", "HEAD~1..HEAD")
+        posts = [c for c in rbt_mock.calls()[calls:] if c and c[0] == "post"]
+        assert len(posts) == 1
+
+    def test_publish_respects_range(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._stack(git_repo)
+        git_repo.run_gg("rbt-sync", "master..HEAD~1")
+        calls = rbt_mock.call_count()
+        assert git_repo.run_gg("rbt-sync", "-p", "HEAD~1..HEAD").returncode == 0
+        new_calls = rbt_mock.calls()[calls:]
+        assert not [c for c in new_calls if c and c[0] == "publish"]
+        posts = [c for c in new_calls if c and c[0] == "post"]
+        assert len(posts) == 1 and "-p" in posts[0]
+
+    def test_dry_run_leaves_db_alone(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._stack(git_repo)
+        before = git_repo.run_gg("db", "--all").stdout
+        git_repo.run_gg("rbt-sync", "-d")
+        assert git_repo.run_gg("db", "--all").stdout == before

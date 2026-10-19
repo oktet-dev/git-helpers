@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from pathlib import Path
 
 from gg import diff_cache, git, rb_api, review_store
-from gg.matcher import ActionKind, NewCommit, SyncAction, reconcile
-from gg.numbering import assign_numbers
+from gg.matcher import ActionKind, NewCommit, SyncAction
+from gg.numbering import number_series
 from gg.rbt_close import close_discarded, close_submitted
 from gg.rbt_post import post_one
 from gg.rbt_publish import publish_one
+from gg.series import SeriesPlan, build_plan
 from gg.sync_edit import edit_plan
-from gg.sync_plan import format_plan
+from gg.sync_plan import format_series_plan, format_summary
 
 _BOLD = "\033[1m"
 _RESET = "\033[0m"
@@ -61,15 +63,34 @@ def _build_new_commits(revs: list[str], *, cwd: Path) -> list[NewCommit]:
     return commits
 
 
+def _all_actions(plan: SeriesPlan) -> list[SyncAction]:
+    """Every action of the plan: live series in order, then gone groups."""
+    actions = [a for s in plan.series for a in s.actions]
+    actions += [a for g in plan.gone for a in g.actions]
+    return actions
+
+
+def _old_series_sizes(plan: SeriesPlan) -> Counter[tuple[str, int]]:
+    """Number of recorded entries the plan holds per old series.
+
+    Keyed by (recording branch, old series number). Every entry of this
+    branch's record is in the plan, matched or gone, so for its own series
+    this is the size the series was posted with.
+    """
+    return Counter(
+        (a.old_entry.branch, a.old_entry.series)
+        for a in _all_actions(plan) if a.old_entry is not None
+    )
+
+
 def _execute(
-    actions: list[SyncAction],
+    plan: SeriesPlan,
     *,
     branch_name: str,
     tracking: str,
     renumber: bool,
     publish: bool,
     verbose: bool,
-    dry_run: bool,
     explicit_branch: str | None,
     initial_depends: str | None,
     reviewers: list[str] | None = None,
@@ -77,128 +98,141 @@ def _execute(
     no_numbers: bool = False,
     cwd: Path,
 ) -> list[review_store.ReviewEntry]:
-    """Execute sync actions and return updated review entries.
+    """Execute a series plan and return the live series' review entries.
 
-    On partial failure, returns entries for completed actions.
+    Entries are in branch order with positions 1..M and their series
+    number. On partial failure, returns entries for completed actions.
     """
-    numbered = assign_numbers(actions, renumber=renumber)
-    old_total = sum(1 for a, _ in numbered if a.old_entry is not None)
+    # Phase 1: close reviews whose commits left the branch. Forgotten
+    # (still recorded on another branch) and skipped ones stay open.
+    for group in plan.gone:
+        for action in group.actions:
+            if action.old_entry is None:
+                continue
+            if action.kind == ActionKind.DISCARD:
+                close_discarded(action.old_entry.review_id, verbose=verbose, cwd=cwd)
+            elif action.kind == ActionKind.SUBMIT:
+                close_submitted(action.old_entry.review_id, verbose=verbose, cwd=cwd)
 
-    # Phase 1: discard removed reviews
-    for action, _ in numbered:
-        if action.kind == ActionKind.DISCARD and action.old_entry:
-            close_discarded(
-                action.old_entry.review_id,
-                dry_run=dry_run, verbose=verbose, cwd=cwd,
-            )
-
-    # Phase 2: process non-discard actions in order
+    # Phase 2: post the live series in order; the dependency chain runs
+    # across series.
+    old_sizes = _old_series_sizes(plan)
     entries: list[review_store.ReviewEntry] = []
     prev_review_id = initial_depends
 
-    for action, num_str in numbered:
-        if action.kind in (ActionKind.DISCARD, ActionKind.SKIP):
-            continue
-
-        assert action.new_commit is not None
-        if no_numbers:
-            num_prefix = ""
-        else:
-            num_prefix = f"{num_str}: " if num_str != "--" else ""
-
-        if (action.kind == ActionKind.KEEP
-                and not action.needs_dep_update
-                and (not renumber
-                     or _number_matches(action.old_entry, num_str, old_total))):
-            # Nothing about the commit changed. If --publish was requested,
-            # still publish the (possibly draft) review request.
-            assert action.old_entry is not None
-            if publish:
-                publish_one(
-                    action.old_entry.review_id,
-                    dry_run=dry_run, verbose=verbose, cwd=cwd,
-                )
-            entries.append(review_store.ReviewEntry(
-                branch=branch_name,
-                position=len(entries) + 1,
-                review_id=action.old_entry.review_id,
-                subject=review_store.strip_prefix(action.new_commit.subject),
-                diff_hash=action.new_commit.diff_hash,
-            ))
-            prev_review_id = action.old_entry.review_id
-            continue
-
-        if action.kind == ActionKind.CREATE:
-            if reviewers is not None or groups is not None:
-                create_reviewers = reviewers or []
-                create_groups = groups or []
-            elif prev_review_id:
-                create_reviewers, create_groups = rb_api.fetch_reviewers(
-                    prev_review_id, cwd=cwd,
-                )
-            else:
-                create_reviewers, create_groups = [], []
-            result = post_one(
-                action.new_commit.rev, tracking,
-                first_post=True,
-                publish=publish,
-                dry_run=dry_run,
-                verbose=verbose,
-                reviewers=create_reviewers,
-                groups=create_groups,
-                explicit_branch=explicit_branch,
-                num_string=num_prefix,
-                depends_on=prev_review_id,
-                cwd=cwd,
-            )
-            rid = result.review_id
-        else:
-            # UPDATE or KEEP_DEP: re-post with -r ID
-            assert action.old_entry is not None
-            result = post_one(
-                action.new_commit.rev, tracking,
-                review_id=action.old_entry.review_id,
-                publish=publish,
-                dry_run=dry_run,
-                verbose=verbose,
-                explicit_branch=explicit_branch,
-                num_string=num_prefix,
-                depends_on=prev_review_id,
-                cwd=cwd,
-            )
-            rid = result.review_id or action.old_entry.review_id
-
+    def record(review_id: str | None, subject: str, diff_hash: str, series: int) -> None:
         entries.append(review_store.ReviewEntry(
             branch=branch_name,
             position=len(entries) + 1,
-            review_id=rid or "",
-            subject=review_store.strip_prefix(action.new_commit.subject),
-            diff_hash=action.new_commit.diff_hash,
+            review_id=review_id or "",
+            subject=subject,
+            diff_hash=diff_hash,
+            series=series,
         ))
-        prev_review_id = rid
+
+    for series in plan.series:
+        for action, num_str in number_series(series, renumber=renumber):
+            if action.kind in (ActionKind.DISCARD, ActionKind.SKIP):
+                continue
+
+            assert action.new_commit is not None
+            old = action.old_entry
+
+            if action.kind == ActionKind.KEEP and action.outside_range:
+                # Outside the range: left untouched, recorded as it was so a
+                # later run still sees what changed.
+                assert old is not None
+                record(old.review_id, old.subject, old.diff_hash, series.number)
+                prev_review_id = old.review_id
+                continue
+
+            if no_numbers:
+                num_prefix = ""
+            else:
+                num_prefix = f"{num_str}: " if num_str != "--" else ""
+
+            if (action.kind == ActionKind.KEEP
+                    and not action.needs_dep_update
+                    and (not renumber
+                         or _number_matches(
+                             old, num_str, old_sizes[(old.branch, old.series)]))):
+                # Nothing about the commit changed. If --publish was requested,
+                # still publish the (possibly draft) review request.
+                assert old is not None
+                if publish:
+                    publish_one(old.review_id, verbose=verbose, cwd=cwd)
+                record(
+                    old.review_id,
+                    review_store.strip_prefix(action.new_commit.subject),
+                    action.new_commit.diff_hash,
+                    series.number,
+                )
+                prev_review_id = old.review_id
+                continue
+
+            if action.kind == ActionKind.CREATE:
+                if reviewers is not None or groups is not None:
+                    create_reviewers = reviewers or []
+                    create_groups = groups or []
+                elif prev_review_id:
+                    create_reviewers, create_groups = rb_api.fetch_reviewers(
+                        prev_review_id, cwd=cwd,
+                    )
+                else:
+                    create_reviewers, create_groups = [], []
+                result = post_one(
+                    action.new_commit.rev, tracking,
+                    first_post=True,
+                    publish=publish,
+                    verbose=verbose,
+                    reviewers=create_reviewers,
+                    groups=create_groups,
+                    explicit_branch=explicit_branch,
+                    num_string=num_prefix,
+                    depends_on=prev_review_id,
+                    cwd=cwd,
+                )
+                rid = result.review_id
+            else:
+                # UPDATE, KEEP_DEP or a renumbered KEEP: re-post with -r ID
+                assert old is not None
+                result = post_one(
+                    action.new_commit.rev, tracking,
+                    review_id=old.review_id,
+                    publish=publish,
+                    verbose=verbose,
+                    explicit_branch=explicit_branch,
+                    num_string=num_prefix,
+                    depends_on=prev_review_id,
+                    cwd=cwd,
+                )
+                rid = result.review_id or old.review_id
+
+            record(
+                rid,
+                review_store.strip_prefix(action.new_commit.subject),
+                action.new_commit.diff_hash,
+                series.number,
+            )
+            prev_review_id = rid
 
     return entries
 
 
-def _format_summary(actions: list[SyncAction]) -> str:
-    """One-line summary of sync action counts."""
-    counts: dict[str, int] = {}
-    for a in actions:
-        if a.kind in (ActionKind.KEEP, ActionKind.KEEP_DEP):
-            counts["kept"] = counts.get("kept", 0) + 1
-        elif a.kind == ActionKind.UPDATE:
-            counts["updated"] = counts.get("updated", 0) + 1
-        elif a.kind == ActionKind.CREATE:
-            counts["created"] = counts.get("created", 0) + 1
-        elif a.kind == ActionKind.DISCARD:
-            counts["discarded"] = counts.get("discarded", 0) + 1
-        elif a.kind == ActionKind.SKIP:
-            counts["skipped"] = counts.get("skipped", 0) + 1
-    parts = []
-    for key in ("kept", "updated", "created", "discarded", "skipped"):
-        if key in counts:
-            parts.append(f"{counts[key]} {key}")
-    return "Synced: " + ", ".join(parts)
+def _edit_interactively(plan: SeriesPlan, *, renumber: bool) -> bool:
+    """Let the user edit the plan's action kinds in $EDITOR.
+
+    The editor sees one flat list: live series in order, then gone groups.
+    Returns False when the user aborted.
+    """
+    actions = _all_actions(plan)
+    edited = edit_plan(actions, renumber=renumber)
+    if edited is None:
+        return False
+    for action, new in zip(actions, edited):
+        action.kind = new.kind
+        action.needs_dep_update = new.needs_dep_update
+    return True
 
 
 def run(args: argparse.Namespace) -> int:
@@ -222,60 +256,87 @@ def run(args: argparse.Namespace) -> int:
         print(f"Closed {len(old)} review(s) as submitted.", file=sys.stderr)
         return 0
 
-    range_spec = args.range or git.rev_range(cwd=cwd)
-    revs = git.list_revs(range_spec, cwd=cwd)
+    # The whole branch decides series and what is gone; the range only
+    # limits which commits are acted on.
+    base = git.range_base(cwd=cwd)
+    full = git.list_revs(f"{base}..HEAD", cwd=cwd)
+    if args.range:
+        selected = git.list_revs(args.range, cwd=cwd)
+        on_branch = set(full)
+        if any(rev not in on_branch for rev in selected):
+            print(
+                f"[gg] {args.range} has commits that are not on "
+                f"'{branch_name}' ({base}..HEAD).",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        selected = full
 
-    if not revs:
+    if not selected:
         print("No commits in range.")
         return 1
 
-    old = review_store.load_reviews(branch_name, cwd=cwd)
-    if not old and not args.new:
+    own = [] if args.new else review_store.load_reviews(branch_name, cwd=cwd)
+    foreign = {
+        b: review_store.load_reviews(b, cwd=cwd)
+        for b in review_store.list_branches(cwd=cwd)
+        if b != branch_name
+    }
+    plan = build_plan(
+        branch=branch_name,
+        own=own,
+        foreign=foreign,
+        commits=_build_new_commits(full, cwd=cwd),
+        in_range=set(selected),
+        landed_subjects=lambda: git.upstream_subjects(base, cwd=cwd),
+        branch_exists=lambda name: git.branch_exists(name, cwd=cwd),
+        depends_on_of=lambda review_id: rb_api.fetch_depends_on(review_id, cwd=cwd),
+        initial_depends=args.depends_on,
+    )
+    for warning in dict.fromkeys(plan.warnings):
+        print(f"[gg] {warning}", file=sys.stderr)
+    if not own and not plan.adopted_from and not args.new:
         print(
             "[gg] No existing reviews; posting as a fresh series.",
             file=sys.stderr,
         )
-        args.new = True
 
-    new = _build_new_commits(revs, cwd=cwd)
-    actions = reconcile([] if args.new else old, new)
+    if args.interactive and not _edit_interactively(plan, renumber=args.renumber):
+        print("Aborted.")
+        return 0
 
-    if args.interactive:
-        edited = edit_plan(actions, renumber=args.renumber)
-        if edited is None:
-            print("Aborted.")
-            return 0
-        actions = edited
-
-    # --force: re-post every matched commit, ignoring diff hash.
-    # Runs AFTER the interactive editor so the user can still skip
+    # --force: re-post every matched commit in the range, ignoring diff
+    # hash. Runs AFTER the interactive editor so the user can still skip
     # individual entries from the plan.
     if args.force:
-        for a in actions:
-            if a.kind in (ActionKind.KEEP, ActionKind.KEEP_DEP):
-                a.kind = ActionKind.UPDATE
-                a.needs_dep_update = False
+        for series in plan.series:
+            for a in series.actions:
+                if a.kind in (ActionKind.KEEP, ActionKind.KEEP_DEP) and not a.outside_range:
+                    a.kind = ActionKind.UPDATE
+                    a.needs_dep_update = False
 
-    # Show plan
-    plan = format_plan(
-        actions, renumber=args.renumber, publish=args.publish,
-        reviewers=args.users, groups=args.groups,
+    print(format_series_plan(
+        plan,
+        upstream=base,
+        renumber=args.renumber,
+        publish=args.publish,
+        reviewers=args.users,
+        groups=args.groups,
         force=args.force,
-    )
-    print(plan)
+    ))
 
     if args.dry:
         return 0
 
     print()
     entries = _execute(
-        actions,
+        plan,
         branch_name=branch_name,
         tracking=tracking,
         renumber=args.renumber,
         publish=args.publish,
         verbose=args.verbose,
-        dry_run=False,
         explicit_branch=args.branch,
         initial_depends=args.depends_on,
         reviewers=args.users or None,
@@ -284,23 +345,29 @@ def run(args: argparse.Namespace) -> int:
         cwd=cwd,
     )
 
-    # Preserve skipped-discard entries so they reappear next sync
-    for a in actions:
-        if a.kind == ActionKind.SKIP and a.old_entry and not a.new_commit:
-            entries.append(review_store.ReviewEntry(
-                branch=branch_name,
-                position=len(entries) + 1,
-                review_id=a.old_entry.review_id,
-                subject=a.old_entry.subject,
-                diff_hash=a.old_entry.diff_hash,
-            ))
-
-    print(_format_summary(actions), file=sys.stderr)
+    # Preserve skipped gone entries so they reappear next sync
+    for group in plan.gone:
+        for a in group.actions:
+            if a.kind == ActionKind.SKIP and a.old_entry:
+                entries.append(review_store.ReviewEntry(
+                    branch=branch_name,
+                    position=len(entries) + 1,
+                    review_id=a.old_entry.review_id,
+                    subject=a.old_entry.subject,
+                    diff_hash=a.old_entry.diff_hash,
+                    series=a.old_entry.series,
+                ))
 
     # Save state
     if entries:
         review_store.save_reviews(entries, cwd=cwd)
         new_hashes = {e.diff_hash for e in entries}
         diff_cache.save_hashes(new_hashes, cwd=cwd, branch=branch_name)
+        # Records of adopted series whose branch is gone (renamed or
+        # deleted) now live on this branch only.
+        for b in sorted(plan.adopted_from):
+            if not git.branch_exists(b, cwd=cwd):
+                review_store.clear_branch(b, cwd=cwd)
 
+    print(format_summary(plan), file=sys.stderr)
     return 0

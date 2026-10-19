@@ -54,7 +54,8 @@ operations support `-d`/`--dry` for dry-run.
 | Command | Description |
 |---------|-------------|
 | `git gg rbt` | Post commit series to ReviewBoard |
-| `git gg rbt-sync` | Reconcile series with ReviewBoard (keep/update/create/discard) |
+| `git gg rbt-sync` | Reconcile the branch's series with ReviewBoard (keep/update/create/discard/submit/forget) |
+| `git gg rbt-sync <range>` | Act only on the commits in `<range>`; the rest of the branch is left alone |
 | `git gg rbt-sync -i` | Interactive mode -- edit the sync plan in `$EDITOR` before executing |
 | `git gg rbt-sync -U alice -G devteam` | Override reviewers/groups for new reviews |
 | `git gg rbt-sync --no-numbers` | Suppress `[i/N]:` prefix on posted reviews |
@@ -153,10 +154,11 @@ git gorbt -p -U kostik
 posts the series fresh (it auto-detects an empty `reviews.db` and
 prints `[gg] No existing reviews; posting as a fresh series.`).
 Subsequent runs reconcile the current commits against the last
-posted set — amend/reorder/add/drop commits and re-run to update
-ReviewBoard to match. A commit whose subject or body changed is
-re-posted even if the diff is unchanged, so RB's summary and
-description track the git commit:
+posted set — amend/reorder/insert/drop commits and re-run to update
+ReviewBoard to match (commits added on top become a new series, see
+below). A commit whose subject or body changed is re-posted even if
+the diff is unchanged, so RB's summary and description track the git
+commit:
 
 ```shell
 # See what changed
@@ -193,6 +195,78 @@ git gg rbt-sync --new
 # After "Ship it!" on the whole series -- close everything and clear state
 git gg rbt-sync --close
 ```
+
+### Several series on one branch
+
+`gg rbt-sync` treats a branch as an ordered list of patch series. Each
+series is a contiguous run of commits, posted as one ReviewBoard chain
+and numbered `[i/N]` within that series; the first patch of a series
+depends on the last patch of the series below it.
+
+- **New commits.** Commits added after the last posted series form one
+  new series. To post only some of them, end the range there; the rest
+  become another new series on a later run:
+
+  ```shell
+  git gg rbt-sync origin/master..HEAD~3   # post up to HEAD~3 as a new series
+  git gg rbt-sync                         # later: the rest as the next series
+  ```
+
+  New commits between two commits of a series join that series
+  (`[2.1/5]`), as before.
+- **Ranges.** A range only limits which commits are acted on. Posted
+  commits outside it are never discarded, re-posted or renumbered; the
+  one exception is a dependency-only re-post (`keep+dep`), listed with
+  `(outside range)`. A range must lie on the branch
+  (`<upstream>..HEAD`), otherwise rbt-sync refuses it.
+- **Series from other branches.** Commits this branch has no record of
+  are looked up, by subject, in other branches' records. A series whose
+  commits sit together on this branch is picked up as one of its series
+  (`from '<branch>'`), so stacking a branch on top of another one, or
+  renaming a branch, needs no extra command. Conflicting records are
+  never guessed: rbt-sync prints a `[gg]` warning and leaves those
+  commits out. After a real run, the source branch's record is deleted
+  if that branch no longer exists in git; otherwise both keep it.
+- **Gone commits.** A posted commit that is no longer on the branch is
+  - `forget` -- another existing branch still records its review: it is
+    dropped from this branch's record and **not** closed;
+  - `submit` -- its subject is in the upstream's last 500 commits: the
+    review is closed as submitted (`rbt close --close-type=submitted`);
+  - `discard` -- otherwise: the review is closed as discarded.
+
+The plan shows a header before each series:
+
+```
+Series k: n patches[ (was series w)][, from '<branch>'][, new][, depends on r/<id>][, outside range]
+```
+
+Gone reviews come first, under `Series k: n patches, landed in
+<upstream>` when every one is `submit`, else `Series k: n patches, gone
+from the branch` (`k` is the number the series had). A series entirely
+outside the range shows only its header. For example:
+
+```
+$ git gg rbt-sync -d
+#          Action       Pub     Review     Subject
+--------------------------------------------------
+Series 1: 2 patches, landed in origin/master
+--         submit       --      r/101      net: fix the queue length check
+--         submit       --      r/102      net: count dropped packets
+
+Series 1: 2 patches (was series 2)
+[1/2]      keep         --      r/103      conf: add DCB support
+[2/2]      update       draft   r/104      conf: restore DCB on reboot
+
+Series 2: 2 patches, from 'mqprio', depends on r/104
+[1/2]      keep+dep     draft   r/120      tc: add mqprio qdisc
+[2/2]      keep         --      r/121      tc: offload mqprio
+
+Series 3: 1 patch, new, depends on r/121
+[1/1]      create       draft   --         tc: document mqprio options
+```
+
+`--new` forgets every series of the branch; `--close` closes every
+series of the branch as submitted.
 
 ### Post, review, publish
 
