@@ -147,6 +147,32 @@ def clear_branch(branch: str, *, cwd: Path | None = None) -> None:
         conn.close()
 
 
+def remove_reviews(
+    branch: str, review_ids: set[str], *, cwd: Path | None = None,
+) -> None:
+    """Delete the given reviews from a branch's record.
+
+    When no review of the branch is left, the branch is cleared (its diff
+    hashes too).
+    """
+    conn = _connect(cwd=cwd)
+    try:
+        conn.executemany(
+            "DELETE FROM reviews WHERE branch = ? AND review_id = ?",
+            [(branch, rid) for rid in sorted(review_ids)],
+        )
+        (left,) = conn.execute(
+            "SELECT COUNT(*) FROM reviews WHERE branch = ? AND review_id != ''",
+            (branch,),
+        ).fetchone()
+        if not left:
+            conn.execute("DELETE FROM reviews WHERE branch = ?", (branch,))
+            conn.execute("DELETE FROM diff_hashes WHERE branch = ?", (branch,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def list_branches(*, cwd: Path | None = None) -> list[str]:
     """Return sorted branch names that have any data in the DB."""
     conn = _connect(cwd=cwd)

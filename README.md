@@ -55,13 +55,13 @@ operations support `-d`/`--dry` for dry-run.
 |---------|-------------|
 | `git gg rbt` | Post commit series to ReviewBoard |
 | `git gg rbt-sync` | Reconcile the branch's series with ReviewBoard (keep/update/create/discard/submit/forget) |
-| `git gg rbt-sync <range>` | Act only on the commits in `<range>`; the rest of the branch is left alone |
+| `git gg rbt-sync <range>` | Post only the commits in `<range>`; posted commits outside it are not re-posted (reviews of commits gone from the branch are still closed or forgotten) |
 | `git gg rbt-sync -i` | Interactive mode -- edit the sync plan in `$EDITOR` before executing |
 | `git gg rbt-sync -U alice -G devteam` | Override reviewers/groups for new reviews |
 | `git gg rbt-sync --no-numbers` | Suppress `[i/N]:` prefix on posted reviews |
 | `git gg rbt-sync --renumber` | Full `[1/N]..[N/N]` renumber instead of fractional |
 | `git gg rbt-sync -f` | Re-post every matched commit, ignoring the diff-hash cache |
-| `git gg rbt-sync --new` | Forget old reviews and post the current commits as a fresh series |
+| `git gg rbt-sync --new` | Forget this branch's reviews and post the current commits fresh (series recorded under other branches are still picked up) |
 | `git gg rbt-sync --close` | Close all reviews as submitted and clear the DB |
 | `git gg publish` | Publish drafts of every review request on the current branch |
 | `git gg rbt-import` | Import an existing ReviewBoard chain into `reviews.db` |
@@ -151,8 +151,10 @@ git gorbt -p -U kostik
 ### Syncing a modified series
 
 `gg rbt-sync` is the everyday command. The first run on a branch
-posts the series fresh (it auto-detects an empty `reviews.db` and
-prints `[gg] No existing reviews; posting as a fresh series.`).
+posts the series fresh (it auto-detects that `reviews.db` has nothing
+for the branch and prints `[gg] No existing reviews; posting as a
+fresh series.`; no notice is printed when it picks up a series recorded
+under another branch instead, see below).
 Subsequent runs reconcile the current commits against the last
 posted set — amend/reorder/insert/drop commits and re-run to update
 ReviewBoard to match (commits added on top become a new series, see
@@ -214,10 +216,14 @@ depends on the last patch of the series below it.
 
   New commits between two commits of a series join that series
   (`[2.1/5]`), as before.
-- **Ranges.** A range only limits which commits are acted on. Posted
-  commits outside it are never discarded, re-posted or renumbered; the
-  one exception is a dependency-only re-post (`keep+dep`), listed with
-  `(outside range)`. A range must lie on the branch
+- **Ranges.** A range only limits which commits on the branch are
+  posted. Posted commits outside it are never discarded, re-posted or
+  renumbered; the one exception is a dependency-only re-post
+  (`keep+dep`) of an unchanged commit, listed with `(outside range)`. A
+  commit outside the range that changed waits for a run that includes
+  it, which posts it as an update. Reviews whose commits are gone from
+  the branch are handled branch-wide (`forget`/`submit`/`discard`
+  below), whatever the range. A range must lie on the branch
   (`<upstream>..HEAD`), otherwise rbt-sync refuses it.
 - **Series from other branches.** Commits this branch has no record of
   are looked up, by subject, in other branches' records. A series whose
@@ -225,8 +231,9 @@ depends on the last patch of the series below it.
   (`from '<branch>'`), so stacking a branch on top of another one, or
   renaming a branch, needs no extra command. Conflicting records are
   never guessed: rbt-sync prints a `[gg]` warning and leaves those
-  commits out. After a real run, the source branch's record is deleted
-  if that branch no longer exists in git; otherwise both keep it.
+  commits out. After a real run, if the source branch no longer exists
+  in git, the reviews picked up from it are removed from its record (and
+  the record goes once nothing is left); otherwise both keep them.
 - **Gone commits.** A posted commit that is no longer on the branch is
   - `forget` -- another existing branch still records its review: it is
     dropped from this branch's record and **not** closed;
@@ -265,8 +272,13 @@ Series 3: 1 patch, new, depends on r/121
 [1/1]      create       draft   --         tc: document mqprio options
 ```
 
-`--new` forgets every series of the branch; `--close` closes every
-series of the branch as submitted.
+`--new` forgets every series of the branch (series recorded under
+other branches are still picked up); `--close` closes every series of
+the branch as submitted.
+
+If a post fails, rbt-sync stops there, saves what it has done and
+exits with status 1 (`[gg] stopped after a failed post; run gg
+rbt-sync again to retry.`); the next run re-posts what was left.
 
 ### Post, review, publish
 

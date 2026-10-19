@@ -20,6 +20,11 @@ from gg.sync_plan import format_series_plan, format_summary
 _BOLD = "\033[1m"
 _RESET = "\033[0m"
 
+# Diff hash recorded for a review whose planned post did not happen: it
+# matches no commit, so the next run plans an update (which also re-applies
+# the review's dependency).
+_POST_FAILED = "post-failed"
+
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     """Register the rbt-sync subcommand."""
@@ -97,11 +102,15 @@ def _execute(
     groups: list[str] | None = None,
     no_numbers: bool = False,
     cwd: Path,
-) -> list[review_store.ReviewEntry]:
-    """Execute a series plan and return the live series' review entries.
+) -> tuple[list[review_store.ReviewEntry], bool]:
+    """Execute a series plan.
 
-    Entries are in branch order with positions 1..M and their series
-    number. On partial failure, returns entries for completed actions.
+    Returns the live series' review entries, in branch order with
+    positions 1..M and their series number, and whether a post failed.
+    Posting stops at the first failed post. Every review that was due a
+    post which did not happen is still returned, with the diff hash
+    `_POST_FAILED` so that the next run re-posts it; creates that did not
+    happen are left out.
     """
     # Phase 1: close reviews whose commits left the branch. Forgotten
     # (still recorded on another branch) and skipped ones stay open.
@@ -119,12 +128,13 @@ def _execute(
     old_sizes = _old_series_sizes(plan)
     entries: list[review_store.ReviewEntry] = []
     prev_review_id = initial_depends
+    failed = False
 
-    def record(review_id: str | None, subject: str, diff_hash: str, series: int) -> None:
+    def record(review_id: str, subject: str, diff_hash: str, series: int) -> None:
         entries.append(review_store.ReviewEntry(
             branch=branch_name,
             position=len(entries) + 1,
-            review_id=review_id or "",
+            review_id=review_id,
             subject=subject,
             diff_hash=diff_hash,
             series=series,
@@ -137,6 +147,7 @@ def _execute(
 
             assert action.new_commit is not None
             old = action.old_entry
+            subject = review_store.strip_prefix(action.new_commit.subject)
 
             if action.kind == ActionKind.KEEP and action.outside_range:
                 # Outside the range: left untouched, recorded as it was so a
@@ -157,17 +168,19 @@ def _execute(
                          or _number_matches(
                              old, num_str, old_sizes[(old.branch, old.series)]))):
                 # Nothing about the commit changed. If --publish was requested,
-                # still publish the (possibly draft) review request.
+                # still publish the (possibly draft) review request -- unless
+                # posting already stopped.
                 assert old is not None
-                if publish:
+                if publish and not failed:
                     publish_one(old.review_id, verbose=verbose, cwd=cwd)
-                record(
-                    old.review_id,
-                    review_store.strip_prefix(action.new_commit.subject),
-                    action.new_commit.diff_hash,
-                    series.number,
-                )
+                record(old.review_id, subject, action.new_commit.diff_hash, series.number)
                 prev_review_id = old.review_id
+                continue
+
+            if failed:
+                # Posting stopped: keep the review, due for a re-post.
+                if old is not None:
+                    record(old.review_id, subject, _POST_FAILED, series.number)
                 continue
 
             if action.kind == ActionKind.CREATE:
@@ -208,15 +221,18 @@ def _execute(
                 )
                 rid = result.review_id or old.review_id
 
-            record(
-                rid,
-                review_store.strip_prefix(action.new_commit.subject),
-                action.new_commit.diff_hash,
-                series.number,
-            )
+            if result.returncode != 0 or not rid:
+                # Stop here: posting on would chain later patches to the
+                # wrong review.
+                failed = True
+                if old is not None:
+                    record(old.review_id, subject, _POST_FAILED, series.number)
+                continue
+
+            record(rid, subject, action.new_commit.diff_hash, series.number)
             prev_review_id = rid
 
-    return entries
+    return entries, failed
 
 
 def _edit_interactively(plan: SeriesPlan, *, renumber: bool) -> bool:
@@ -330,7 +346,7 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     print()
-    entries = _execute(
+    entries, failed = _execute(
         plan,
         branch_name=branch_name,
         tracking=tracking,
@@ -358,16 +374,24 @@ def run(args: argparse.Namespace) -> int:
                     series=a.old_entry.series,
                 ))
 
-    # Save state
+    # Save state, also after a failed post: what was done stays recorded.
     if entries:
         review_store.save_reviews(entries, cwd=cwd)
-        new_hashes = {e.diff_hash for e in entries}
+        new_hashes = {e.diff_hash for e in entries if e.diff_hash != _POST_FAILED}
         diff_cache.save_hashes(new_hashes, cwd=cwd, branch=branch_name)
-        # Records of adopted series whose branch is gone (renamed or
-        # deleted) now live on this branch only.
+        # Reviews adopted from a branch that is gone (renamed or deleted)
+        # now live on this branch only: drop them from its record. Its
+        # other reviews stay there (still open on ReviewBoard).
+        recorded = {e.review_id for e in entries if e.review_id}
         for b in sorted(plan.adopted_from):
             if not git.branch_exists(b, cwd=cwd):
-                review_store.clear_branch(b, cwd=cwd)
+                review_store.remove_reviews(b, recorded, cwd=cwd)
 
+    if failed:
+        print(
+            "[gg] stopped after a failed post; run gg rbt-sync again to retry.",
+            file=sys.stderr,
+        )
+        return 1
     print(format_summary(plan), file=sys.stderr)
     return 0

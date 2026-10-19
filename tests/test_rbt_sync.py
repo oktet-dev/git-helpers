@@ -1047,6 +1047,61 @@ class TestSeries:
         posts = [c for c in rbt_mock.calls()[calls:] if c and c[0] == "post"]
         assert len(posts) == 1
 
+    def test_deleted_source_keeps_reviews_not_taken(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """base: s1,s2 (series 1), t1,t2 (series 2); stack: s1 s2 t1 o1 t2."""
+        git_repo.create_branch("base", "master")
+        git_repo.commit("s1")
+        git_repo.commit("s2")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        git_repo.commit("t1")
+        git_repo.commit("t2")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        git_repo.create_branch("other", "master")
+        git_repo.commit("o1")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        git_repo.create_branch("stack", "master")
+        for rev in ("base~3", "base~2", "base~1", "other", "base"):
+            assert git_repo.git("cherry-pick", rev).returncode == 0
+        git_repo.git("branch", "-D", "base")
+        t_ids = self._ids(git_repo, "base")[2:]
+        calls = rbt_mock.call_count()
+
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0, r.stderr
+        assert "not contiguous" in r.stderr
+        assert self._ids(git_repo, "base") == t_ids
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        posts = [c for c in rbt_mock.calls()[calls:] if c and c[0] == "post"]
+        assert not [
+            c for c in posts
+            if any(a.startswith("--summary=") and a.endswith((": t1", ": t2")) for a in c)
+        ]
+
+    def test_changed_commit_outside_range_waits(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        self._stack(git_repo)
+        git_repo.run_gg("rbt-sync", "master..HEAD~1")
+        c2_id = self._ids(git_repo)[3]
+        c2 = git_repo.git("rev-parse", "HEAD~1").stdout.strip()
+        n1 = git_repo.git("rev-parse", "HEAD").stdout.strip()
+        # Drop c1, amend c2.
+        git_repo.git("reset", "--hard", "HEAD~3")
+        git_repo.git("cherry-pick", c2)
+        (git_repo.work_dir / "c2-extra").write_text("x\n")
+        git_repo.git("add", "c2-extra")
+        git_repo.git("commit", "--amend", "--no-edit")
+        git_repo.git("cherry-pick", n1)
+        calls = rbt_mock.call_count()
+
+        assert git_repo.run_gg("rbt-sync", "HEAD~1..HEAD").returncode == 0
+        posts = [c for c in rbt_mock.calls()[calls:] if c and c[0] == "post"]
+        assert len(posts) == 1 and "--summary=[1/1]: n1" in posts[0]
+        out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
+        assert re.search(rf"update\s+\S+\s+r/{c2_id}\s+c2", out)
+
     def test_publish_respects_range(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
         self._stack(git_repo)
         git_repo.run_gg("rbt-sync", "master..HEAD~1")
@@ -1062,3 +1117,42 @@ class TestSeries:
         before = git_repo.run_gg("db", "--all").stdout
         git_repo.run_gg("rbt-sync", "-d")
         assert git_repo.run_gg("db", "--all").stdout == before
+
+
+class TestFailedPost:
+    def test_failed_create_stops_the_run(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("s1")
+        git_repo.commit("s2")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        before = review_store.load_reviews("feature", cwd=git_repo.work_dir)
+        git_repo.commit("n1")
+        git_repo.commit("n2")
+        calls = rbt_mock.call_count()
+        rbt_mock.queue_failure("ERROR: boom\n")
+
+        # -U: no reviewer lookup, so n1's post is the first rbt call
+        r = git_repo.run_gg("rbt-sync", "-U", "alice")
+        assert r.returncode == 1
+        assert "[gg] stopped after a failed post; run gg rbt-sync again to retry." in r.stderr
+        posts = [c for c in rbt_mock.calls()[calls:] if c and c[0] == "post"]
+        assert len(posts) == 1  # n1's failed create; n2 not posted
+        assert review_store.load_reviews("feature", cwd=git_repo.work_dir) == before
+        out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
+        assert "Series 2: 2 patches, new" in out
+        assert len(re.findall(r"\]\s+create", out)) == 2
+
+    def test_failed_update_is_retried(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        _post_series(git_repo)
+        (git_repo.work_dir / "extra").write_text("changed\n")
+        git_repo.git("add", "extra")
+        git_repo.git("commit", "--amend", "--no-edit")
+        rbt_mock.queue_failure("ERROR: boom\n")
+
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 1
+        out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
+        assert re.search(r"\[2/2\]\s+update\s+\S+\s+r/\d+\s+add tests", out)

@@ -243,6 +243,18 @@ def test_out_of_range_keep_dep_marked():
     assert b.kind.value == "keep+dep" and b.outside_range
 
 
+def test_out_of_range_changed_commit_not_rechained():
+    # Same shape as above, but b changed (diff, then subject): it is held
+    # as keep and posted as an update by a later run that includes it.
+    old_b = "add the b helper"
+    for b_commit in (commit(old_b, h="new"), commit(old_b + "s", h=f"h-{old_b}")):
+        own = [entry("stack", 1, "1000", "a"), entry("stack", 2, "1001", old_b, series=2)]
+        plan = plan_of(own, [commit("a"), commit("x"), b_commit], in_range={"r-x"})
+        b = action(plan, b_commit.subject)
+        assert b.old_entry.review_id == "1001"
+        assert b.kind.value == "keep" and b.outside_range and not b.needs_dep_update
+
+
 def test_forget_wins_over_landed():
     own = [entry("stack", 1, "2", "[1/2]: shared"), entry("stack", 2, "3", "[2/2]: gone"),
            entry("stack", 3, "4", "k")]

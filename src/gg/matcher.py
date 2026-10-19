@@ -51,6 +51,18 @@ class SyncAction:
     forget_branch: str | None = None
 
 
+def content_changed(entry: ReviewEntry, commit: NewCommit) -> bool:
+    """True when a commit differs from its recorded review (diff or subject).
+
+    A changed diff, or an edited subject with the same diff (whose new
+    summary must be pushed), both need an update.
+    """
+    return (
+        commit.diff_hash != entry.diff_hash
+        or strip_prefix(commit.subject) != strip_prefix(entry.subject)
+    )
+
+
 def _subject_ratio(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, a, b).ratio()
 
@@ -127,13 +139,7 @@ def reconcile(
         commit = new[ni]
         if ni in matches:
             entry = old[matches[ni]]
-            if commit.diff_hash != entry.diff_hash:
-                kind = ActionKind.UPDATE
-            elif strip_prefix(commit.subject) != strip_prefix(entry.subject):
-                # Diff unchanged but commit subject edited -- push the new summary.
-                kind = ActionKind.UPDATE
-            else:
-                kind = ActionKind.KEEP
+            kind = ActionKind.UPDATE if content_changed(entry, commit) else ActionKind.KEEP
             actions.append(SyncAction(
                 kind=kind, old_entry=entry, new_commit=commit,
                 new_position=ni + 1,

@@ -122,6 +122,28 @@ class TestReviewCRUD:
         assert b[0].review_id == "2000"
 
 
+class TestRemoveReviews:
+    def _seed(self, git_repo: GitRepo) -> None:
+        review_store.save_reviews(
+            [ReviewEntry("base", 1, "1000", "s1", "aaa"),
+             ReviewEntry("base", 2, "1001", "t1", "bbb", 2)],
+            cwd=git_repo.work_dir,
+        )
+        review_store.save_diff_hashes("base", {"aaa", "bbb"}, cwd=git_repo.work_dir)
+
+    def test_removes_only_given_ids(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._seed(git_repo)
+        review_store.remove_reviews("base", {"1000", "9999"}, cwd=git_repo.work_dir)
+        left = review_store.load_reviews("base", cwd=git_repo.work_dir)
+        assert [(e.review_id, e.series) for e in left] == [("1001", 2)]
+        assert review_store.load_diff_hashes("base", cwd=git_repo.work_dir) == {"aaa", "bbb"}
+
+    def test_clears_branch_when_nothing_left(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._seed(git_repo)
+        review_store.remove_reviews("base", {"1000", "1001"}, cwd=git_repo.work_dir)
+        assert "base" not in review_store.list_branches(cwd=git_repo.work_dir)
+
+
 class TestDiffHashCRUD:
     def test_load_empty(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
         result = review_store.load_diff_hashes("feature", cwd=git_repo.work_dir)

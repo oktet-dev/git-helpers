@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import cache
 
-from gg.matcher import ActionKind, NewCommit, SyncAction, reconcile
+from gg.matcher import ActionKind, NewCommit, SyncAction, content_changed, reconcile
 from gg.review_store import ReviewEntry, strip_prefix
 
 # Series membership while planning: an own series number, an adopted
@@ -427,7 +427,9 @@ def _chain(
     about to be posted, which no kept review depends on yet. A kept review
     stays kept only if its current predecessor, stepping back over reviews
     being submitted, is the expected one; else it becomes keep+dep. The
-    first patch of series 1 is never re-chained.
+    first patch of series 1 is never re-chained, nor is a commit outside
+    the range whose content changed: a keep+dep would post its new diff,
+    so it waits for a run that includes it, which posts it as an update.
     """
     sources = {id(row.action): row.source for row in rows}
     record_pred: dict[str, str | None] = {}
@@ -440,7 +442,13 @@ def _chain(
     for s in series:
         s.depends_on = initial_depends if s.number == 1 else expected
         for i, action in enumerate(s.actions):
-            if action.kind == ActionKind.KEEP and (s.number, i) != (1, 0) and (
+            rechainable = (
+                action.kind == ActionKind.KEEP
+                and (s.number, i) != (1, 0)
+                and not (action.outside_range
+                         and content_changed(action.old_entry, action.new_commit))
+            )
+            if rechainable and (
                 new_below
                 or _live_pred(sources[id(action)], record_pred, submitted,
                               depends_on_of) != expected
