@@ -109,16 +109,23 @@ def _close_gone(plan: SeriesPlan, *, verbose: bool, cwd: Path) -> None:
     """Phase 1: close reviews whose commits left the branch.
 
     Forgotten (still recorded on another branch) and skipped ones stay
-    open.
+    open. A review whose close fails becomes skipped: it stays in the
+    record, so the next run tries again.
     """
     for group in plan.gone:
         for action in group.actions:
             if action.old_entry is None:
                 continue
+            review_id = action.old_entry.review_id
             if action.kind == ActionKind.DISCARD:
-                close_discarded(action.old_entry.review_id, verbose=verbose, cwd=cwd)
+                rc = close_discarded(review_id, verbose=verbose, cwd=cwd)
             elif action.kind == ActionKind.SUBMIT:
-                close_submitted(action.old_entry.review_id, verbose=verbose, cwd=cwd)
+                rc = close_submitted(review_id, verbose=verbose, cwd=cwd)
+            else:
+                continue
+            if rc != 0:
+                print(f"[gg] failed to close r/{review_id}", file=sys.stderr)
+                action.kind = ActionKind.SKIP
 
 
 @dataclass

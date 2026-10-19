@@ -165,6 +165,31 @@ class TestSyncExecution:
         has_close = any("close" in c for c in new_calls)
         assert has_close
 
+    def test_failed_close_is_kept_and_retried(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("to be dropped")
+        _post_series(git_repo)
+        dropped = review_store.load_reviews("feature", cwd=git_repo.work_dir)[1]
+        git_repo.git("reset", "--hard", "HEAD~1")
+        rbt_mock.queue_failure("ERROR: boom\n", command="close")
+
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0
+        assert f"[gg] failed to close r/{dropped.review_id}\n" in r.stderr
+        assert "Synced: 1 kept, 1 skipped" in r.stderr
+        saved = review_store.load_reviews("feature", cwd=git_repo.work_dir)
+        assert [e.review_id for e in saved][1:] == [dropped.review_id]
+
+        calls = rbt_mock.call_count()
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0
+        assert ["close", "--close-type=discarded", dropped.review_id] in rbt_mock.calls()[calls:]
+        assert "Synced: 1 kept, 1 discarded" in r.stderr
+        assert len(review_store.load_reviews("feature", cwd=git_repo.work_dir)) == 1
+
     def test_no_existing_reviews_auto_new(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
     ) -> None:
