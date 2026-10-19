@@ -50,6 +50,22 @@ def fetch_review(review_id: str, *, cwd: Path | None = None) -> dict:
     }
 
 
+def fetch_depends_on(review_id: str, *, cwd: Path | None = None) -> list[str]:
+    """Return the review ids a review request depends on ([] when none)."""
+    r = subprocess.run(
+        ["rbt", "api-get", f"/review-requests/{review_id}/"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout).strip()
+        raise SystemExit(f"rbt api-get failed for review {review_id}: {msg}")
+
+    rr = json.loads(r.stdout)["review_request"]
+    return [_parse_block_id(d) for d in rr.get("depends_on", [])]
+
+
 def fetch_reviewers(
     review_id: str, *, cwd: Path | None = None,
 ) -> tuple[list[str], list[str]]:

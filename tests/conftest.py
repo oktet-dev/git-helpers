@@ -39,6 +39,19 @@ class RbtMock:
 
     script_dir: Path
     log_file: Path
+    state_dir: Path
+
+    def set_review(
+        self,
+        review_id: str,
+        *,
+        summary: str = "",
+        depends_on: list[str] | None = None,
+    ) -> None:
+        """Write the mock's state for a review, as if it had been posted."""
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        state = {"summary": summary, "depends_on": depends_on or []}
+        (self.state_dir / f"{review_id}.json").write_text(json.dumps(state))
 
     def calls(self) -> list[list[str]]:
         if not self.log_file.exists():
@@ -185,6 +198,10 @@ if cmd == "api-get":
         "id": int(review_id),
         "summary": state.get("summary", ""),
         "blocks": [],
+        "depends_on": [
+            {"href": "https://reviews.example.com/api/review-requests/" + str(d) + "/"}
+            for d in state.get("depends_on", [])
+        ],
         "target_people": [{"title": p} for p in state.get("people", [])],
         "target_groups": [{"title": g} for g in state.get("groups", [])],
     }
@@ -201,6 +218,7 @@ else:
     people = []
     groups = []
     summary = ""
+    depends_on = []
     i = 0
     # Like rbtools: one comma-separated value; a repeated flag overwrites it.
     while i < len(args):
@@ -213,9 +231,17 @@ else:
         elif args[i].startswith("--summary="):
             summary = args[i].split("=", 1)[1]
             i += 1
+        elif args[i].startswith("--depends-on="):
+            depends_on = [d for d in args[i].split("=", 1)[1].split(",") if d]
+            i += 1
         else:
             i += 1
-    state = {"people": people, "groups": groups, "summary": summary}
+    state = {
+        "people": people,
+        "groups": groups,
+        "summary": summary,
+        "depends_on": depends_on,
+    }
     state_file = os.path.join(STATE_DIR, str(rid) + ".json")
     with open(state_file, "w") as f:
         json.dump(state, f)
@@ -247,7 +273,7 @@ def rbt_mock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> RbtMock:
     script.chmod(0o755)
     monkeypatch.setenv("PATH", str(mock_dir) + os.pathsep + os.environ.get("PATH", ""))
 
-    return RbtMock(script_dir=mock_dir, log_file=log_file)
+    return RbtMock(script_dir=mock_dir, log_file=log_file, state_dir=state_dir)
 
 
 @pytest.fixture
