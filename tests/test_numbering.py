@@ -1,8 +1,9 @@
 """Tests for gg.numbering -- fractional and full renumbering."""
 
 from gg.matcher import ActionKind, NewCommit, SyncAction
-from gg.numbering import assign_numbers
+from gg.numbering import assign_numbers, number_series
 from gg.review_store import ReviewEntry
+from gg.series import Series
 
 
 def _keep(pos: int, rid: str, subject: str) -> SyncAction:
@@ -72,3 +73,11 @@ class TestFractional:
         assert ".1" in result[1][1] or ".2" in result[1][1] or "1." in result[1][1]
         # Second keeps position 2
         assert result[2][1] == "[2/3]"
+
+
+def test_number_series_moved_counts_as_insert():
+    a = SyncAction(ActionKind.KEEP, ReviewEntry("b", 1, "1", "a", "h"), NewCommit("r1", "a", "h"), 1)
+    m = SyncAction(ActionKind.UPDATE, ReviewEntry("b", 3, "3", "m", "h"), NewCommit("r2", "m", "h"), 2, moved=True)
+    b = SyncAction(ActionKind.KEEP, ReviewEntry("b", 2, "2", "b", "h"), NewCommit("r3", "b", "h"), 3)
+    labels = [n for _, n in number_series(Series(number=1, actions=[a, m, b]))]
+    assert labels == ["[1/3]", "[1.1/3]", "[2/3]"]

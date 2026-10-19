@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from gg.matcher import ActionKind, SyncAction
+from gg.series import Series
 
 
 def assign_numbers(
@@ -82,3 +85,21 @@ def assign_numbers(
         result.append((action, "--"))
 
     return result
+
+
+def number_series(
+    series: Series, *, renumber: bool = False,
+) -> list[tuple[SyncAction, str]]:
+    """Number one series' actions; N is the series' patch count.
+
+    Moved actions are numbered as inserts: assign_numbers does not see their
+    old entry, so they get a fractional label instead of their old rank.
+    """
+    seen = [
+        replace(a, old_entry=None) if a.moved else a for a in series.actions
+    ]
+    by_id = {id(s): a for s, a in zip(seen, series.actions)}
+    return [
+        (by_id[id(s)], label)
+        for s, label in assign_numbers(seen, renumber=renumber)
+    ]
