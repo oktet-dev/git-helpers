@@ -65,16 +65,22 @@ class RbtMock:
     def call_count(self) -> int:
         return len(self.calls())
 
-    def queue_failure(self, output: str, returncode: int = 1, count: int = 1) -> None:
+    def queue_failure(
+        self, output: str, returncode: int = 1, count: int = 1,
+        *, command: str | None = None,
+    ) -> None:
         """Pre-program the next ``count`` rbt invocations to fail.
 
         Each failure prints ``output`` to stderr and exits ``returncode``.
         Subsequent invocations proceed with the mock's normal behavior.
+        With ``command`` (e.g. "post"), only invocations of that rbt command
+        fail; others pass through while the failure waits at the head.
         """
         queue_file = self.script_dir / "failure_queue.jsonl"
+        item = {"output": output, "returncode": returncode, "command": command}
         with queue_file.open("a") as f:
             for _ in range(count):
-                f.write(json.dumps({"output": output, "returncode": returncode}) + "\n")
+                f.write(json.dumps(item) + "\n")
 
 
 @dataclass
@@ -171,14 +177,16 @@ rid = count + 1000
 with open(LOG, "a") as f:
     f.write(json.dumps(sys.argv[1:]) + "\\n")
 
-# Failure queue: each line is {"output": str, "returncode": int}.
-# Pop the head if present and exit with the queued failure.
+# Failure queue: each line is {"output": str, "returncode": int,
+# "command": str | None}. Pop the head if present (and, when it names a
+# command, if this is that command) and exit with the queued failure.
 _QFILE = os.path.join(_dir, "failure_queue.jsonl")
 if os.path.exists(_QFILE):
     with open(_QFILE) as _qf:
         _lines = _qf.read().splitlines()
-    if _lines:
-        _head = json.loads(_lines[0])
+    _head = json.loads(_lines[0]) if _lines else None
+    _cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    if _head is not None and _head.get("command") in (None, _cmd):
         with open(_QFILE, "w") as _qf:
             _qf.write("\\n".join(_lines[1:]) + ("\\n" if len(_lines) > 1 else ""))
         sys.stderr.write(_head["output"])

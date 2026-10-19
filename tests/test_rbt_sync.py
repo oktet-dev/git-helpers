@@ -6,6 +6,8 @@ import subprocess
 import sys
 import textwrap
 
+import pytest
+
 from gg import review_store
 from tests.conftest import GitRepo, RbtMock
 
@@ -1226,6 +1228,83 @@ class TestFailedPost:
         out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
         assert "Series 2: 2 patches, new" in out
         assert len(re.findall(r"\]\s+create", out)) == 2
+
+    def test_exception_mid_run_keeps_what_was_done(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("n1")
+        git_repo.commit("n2")
+        git_repo.commit("n3")
+        # n1 is created with no reviewer lookup; the lookup for n2 (n1's
+        # reviewers) fails with SystemExit.
+        rbt_mock.queue_failure("ERROR: boom\n", command="api-get")
+
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 1
+        assert "rbt api-get failed" in r.stderr
+        posts = [c for c in rbt_mock.calls() if c and c[0] == "post"]
+        assert len(posts) == 1
+        [n1] = review_store.load_reviews("feature", cwd=git_repo.work_dir)
+        assert n1.subject == "n1"
+        out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
+        assert re.search(rf"\[1/1\]\s+keep\s+--\s+r/{n1.review_id}\s+n1", out)
+        assert len(re.findall(r"\]\s+create", out)) == 2
+
+    def test_interrupt_mid_run_saves_and_reraises(
+        self, git_repo: GitRepo, rbt_mock: RbtMock, monkeypatch,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("a1")
+        git_repo.commit("a2")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        a1, a2 = review_store.load_reviews("feature", cwd=git_repo.work_dir)
+        git_repo.commit("n1")
+
+        from gg import cli, sync
+        real_post = sync.post_one
+        posts: list[str] = []
+
+        def post_one(*args, **kwargs):
+            posts.append(args[0])
+            if len(posts) == 2:
+                raise KeyboardInterrupt
+            return real_post(*args, **kwargs)
+
+        monkeypatch.setattr(sync, "post_one", post_one)
+        monkeypatch.chdir(git_repo.work_dir)
+        # -f: a1 and a2 are re-posted; the interrupt hits a2's post.
+        with pytest.raises(KeyboardInterrupt):
+            cli.main(["rbt-sync", "-f"])
+
+        saved = review_store.load_reviews("feature", cwd=git_repo.work_dir)
+        assert [(e.review_id, e.diff_hash) for e in saved] == [
+            (a1.review_id, a1.diff_hash), (a2.review_id, "post-failed")]
+        out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
+        assert re.search(rf"\[1/2\]\s+keep\s+--\s+r/{a1.review_id}\s+a1", out)
+        assert re.search(rf"\[2/2\]\s+update\s+\S+\s+r/{a2.review_id}\s+a2", out)
+        assert re.search(r"\[1/1\]\s+create\s+\S+\s+--\s+n1", out)
+
+    def test_stop_with_no_live_review_clears_closed_ones(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("a1")
+        git_repo.commit("a2")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        git_repo.git("reset", "--hard", "master")
+        git_repo.commit("n1")
+        rbt_mock.queue_failure("ERROR: boom\n", command="post")
+        calls = rbt_mock.call_count()
+
+        r = git_repo.run_gg("rbt-sync", "-U", "alice")
+        assert r.returncode == 1
+        closes = [c for c in rbt_mock.calls()[calls:] if c and c[0] == "close"]
+        assert len(closes) == 2
+        assert review_store.load_reviews("feature", cwd=git_repo.work_dir) == []
+        out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
+        assert "discard" not in out
+        assert re.search(r"\[1/1\]\s+create\s+\S+\s+--\s+n1", out)
 
     def test_failed_update_is_retried(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
         git_repo.create_branch("feature", "master")

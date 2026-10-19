@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections import Counter
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from gg import diff_cache, git, rb_api, review_store
@@ -88,32 +89,22 @@ def _old_series_sizes(plan: SeriesPlan) -> Counter[tuple[str, int]]:
     )
 
 
-def _execute(
-    plan: SeriesPlan,
-    *,
-    branch_name: str,
-    tracking: str,
-    renumber: bool,
-    publish: bool,
-    verbose: bool,
-    explicit_branch: str | None,
-    initial_depends: str | None,
-    reviewers: list[str] | None = None,
-    groups: list[str] | None = None,
-    no_numbers: bool = False,
-    cwd: Path,
-) -> tuple[list[review_store.ReviewEntry], bool]:
-    """Execute a series plan.
+def _entry(
+    branch: str, review_id: str, subject: str, diff_hash: str, series: int,
+) -> review_store.ReviewEntry:
+    """A record entry; its position is set when the record is saved."""
+    return review_store.ReviewEntry(
+        branch=branch, position=0, review_id=review_id, subject=subject,
+        diff_hash=diff_hash, series=series,
+    )
 
-    Returns the live series' review entries, in branch order with
-    positions 1..M and their series number, and whether a post failed.
-    Posting stops at the first failed post. Every review that was due a
-    post which did not happen is still returned, with the diff hash
-    `_POST_FAILED` so that the next run re-posts it; creates that did not
-    happen are left out.
+
+def _close_gone(plan: SeriesPlan, *, verbose: bool, cwd: Path) -> None:
+    """Phase 1: close reviews whose commits left the branch.
+
+    Forgotten (still recorded on another branch) and skipped ones stay
+    open.
     """
-    # Phase 1: close reviews whose commits left the branch. Forgotten
-    # (still recorded on another branch) and skipped ones stay open.
     for group in plan.gone:
         for action in group.actions:
             if action.old_entry is None:
@@ -123,116 +114,189 @@ def _execute(
             elif action.kind == ActionKind.SUBMIT:
                 close_submitted(action.old_entry.review_id, verbose=verbose, cwd=cwd)
 
-    # Phase 2: post the live series in order; the dependency chain runs
-    # across series.
+
+@dataclass
+class _Row:
+    """A live row of the plan, in posting order."""
+
+    action: SyncAction
+    num_str: str                          # its [i/N] label
+    series: int                           # its live series number
+    post: bool                            # whether the plan posts it
+    # What the record keeps for it unless a post is done: a row not to be
+    # posted keeps its entry; a review due a post is kept with the diff
+    # hash `_POST_FAILED`, so that the next run re-posts it; a create has
+    # nothing to keep.
+    held: review_store.ReviewEntry | None
+
+
+def _live_rows(plan: SeriesPlan, *, branch_name: str, renumber: bool) -> list[_Row]:
+    """The live series' rows to post or keep, in branch order."""
     old_sizes = _old_series_sizes(plan)
-    entries: list[review_store.ReviewEntry] = []
-    prev_review_id = initial_depends
-    failed = False
-
-    def record(review_id: str, subject: str, diff_hash: str, series: int) -> None:
-        entries.append(review_store.ReviewEntry(
-            branch=branch_name,
-            position=len(entries) + 1,
-            review_id=review_id,
-            subject=subject,
-            diff_hash=diff_hash,
-            series=series,
-        ))
-
+    rows: list[_Row] = []
     for series in plan.series:
         for action, num_str in number_series(series, renumber=renumber):
             if action.kind in (ActionKind.DISCARD, ActionKind.SKIP):
                 continue
-
             assert action.new_commit is not None
             old = action.old_entry
             subject = review_store.strip_prefix(action.new_commit.subject)
-
             if action.kind == ActionKind.KEEP and action.outside_range:
                 # Outside the range: left untouched, recorded as it was so a
                 # later run still sees what changed.
                 assert old is not None
-                record(old.review_id, old.subject, old.diff_hash, series.number)
-                prev_review_id = old.review_id
-                continue
-
-            if no_numbers:
-                num_prefix = ""
-            else:
-                num_prefix = f"{num_str}: " if num_str != "--" else ""
-
-            if (action.kind == ActionKind.KEEP
+                post = False
+                held = _entry(branch_name, old.review_id, old.subject, old.diff_hash,
+                              series.number)
+            elif (action.kind == ActionKind.KEEP
                     and not action.needs_dep_update
                     and (not renumber
                          or _number_matches(
                              old, num_str, old_sizes[(old.branch, old.series)]))):
-                # Nothing about the commit changed. If --publish was requested,
-                # still publish the (possibly draft) review request -- unless
-                # posting already stopped.
+                # Nothing about the commit changed.
                 assert old is not None
-                if publish and not failed:
-                    publish_one(old.review_id, verbose=verbose, cwd=cwd)
-                record(old.review_id, subject, action.new_commit.diff_hash, series.number)
-                prev_review_id = old.review_id
-                continue
-
-            if failed:
-                # Posting stopped: keep the review, due for a re-post.
-                if old is not None:
-                    record(old.review_id, subject, _POST_FAILED, series.number)
-                continue
-
-            if action.kind == ActionKind.CREATE:
-                if reviewers is not None or groups is not None:
-                    create_reviewers = reviewers or []
-                    create_groups = groups or []
-                elif prev_review_id:
-                    create_reviewers, create_groups = rb_api.fetch_reviewers(
-                        prev_review_id, cwd=cwd,
-                    )
-                else:
-                    create_reviewers, create_groups = [], []
-                result = post_one(
-                    action.new_commit.rev, tracking,
-                    first_post=True,
-                    publish=publish,
-                    verbose=verbose,
-                    reviewers=create_reviewers,
-                    groups=create_groups,
-                    explicit_branch=explicit_branch,
-                    num_string=num_prefix,
-                    depends_on=prev_review_id,
-                    cwd=cwd,
-                )
-                rid = result.review_id
+                post = False
+                held = _entry(branch_name, old.review_id, subject,
+                              action.new_commit.diff_hash, series.number)
             else:
-                # UPDATE, KEEP_DEP or a renumbered KEEP: re-post with -r ID
-                assert old is not None
-                result = post_one(
-                    action.new_commit.rev, tracking,
-                    review_id=old.review_id,
-                    publish=publish,
-                    verbose=verbose,
-                    explicit_branch=explicit_branch,
-                    num_string=num_prefix,
-                    depends_on=prev_review_id,
-                    cwd=cwd,
+                post = True
+                held = None if old is None else _entry(
+                    branch_name, old.review_id, subject, _POST_FAILED, series.number)
+            rows.append(_Row(action, num_str, series.number, post, held))
+    return rows
+
+
+def _execute(
+    rows: list[_Row],
+    record: list[review_store.ReviewEntry | None],
+    *,
+    branch_name: str,
+    tracking: str,
+    publish: bool,
+    verbose: bool,
+    explicit_branch: str | None,
+    initial_depends: str | None,
+    reviewers: list[str] | None = None,
+    groups: list[str] | None = None,
+    no_numbers: bool = False,
+    cwd: Path,
+) -> bool:
+    """Phase 2: post the live rows in order; the chain runs across series.
+
+    `record[i]` is what the branch's record keeps for `rows[i]`: its held
+    entry until its post is done, then the posted review. Posting stops at
+    the first failed post; returns whether one failed. On an exception the
+    rows not done keep their held entries.
+    """
+    prev_review_id = initial_depends
+    for i, row in enumerate(rows):
+        action = row.action
+        assert action.new_commit is not None
+        old = action.old_entry
+
+        if not row.post:
+            # Nothing to post. If --publish was requested, still publish
+            # the (possibly draft) review request, unless it is outside
+            # the range.
+            assert old is not None
+            if publish and not action.outside_range:
+                publish_one(old.review_id, verbose=verbose, cwd=cwd)
+            prev_review_id = old.review_id
+            continue
+
+        if no_numbers or row.num_str == "--":
+            num_prefix = ""
+        else:
+            num_prefix = f"{row.num_str}: "
+
+        if action.kind == ActionKind.CREATE:
+            if reviewers is not None or groups is not None:
+                create_reviewers = reviewers or []
+                create_groups = groups or []
+            elif prev_review_id:
+                create_reviewers, create_groups = rb_api.fetch_reviewers(
+                    prev_review_id, cwd=cwd,
                 )
-                rid = result.review_id or old.review_id
+            else:
+                create_reviewers, create_groups = [], []
+            result = post_one(
+                action.new_commit.rev, tracking,
+                first_post=True,
+                publish=publish,
+                verbose=verbose,
+                reviewers=create_reviewers,
+                groups=create_groups,
+                explicit_branch=explicit_branch,
+                num_string=num_prefix,
+                depends_on=prev_review_id,
+                cwd=cwd,
+            )
+            rid = result.review_id
+        else:
+            # UPDATE, KEEP_DEP or a renumbered KEEP: re-post with -r ID
+            assert old is not None
+            result = post_one(
+                action.new_commit.rev, tracking,
+                review_id=old.review_id,
+                publish=publish,
+                verbose=verbose,
+                explicit_branch=explicit_branch,
+                num_string=num_prefix,
+                depends_on=prev_review_id,
+                cwd=cwd,
+            )
+            rid = result.review_id or old.review_id
 
-            if result.returncode != 0 or not rid:
-                # Stop here: posting on would chain later patches to the
-                # wrong review.
-                failed = True
-                if old is not None:
-                    record(old.review_id, subject, _POST_FAILED, series.number)
-                continue
+        if result.returncode != 0 or not rid:
+            # Stop here: posting on would chain later patches to the
+            # wrong review.
+            return True
 
-            record(rid, subject, action.new_commit.diff_hash, series.number)
-            prev_review_id = rid
+        record[i] = _entry(
+            branch_name, rid, review_store.strip_prefix(action.new_commit.subject),
+            action.new_commit.diff_hash, row.series,
+        )
+        prev_review_id = rid
 
-    return entries, failed
+    return False
+
+
+def _save(
+    plan: SeriesPlan,
+    live: list[review_store.ReviewEntry],
+    *,
+    branch_name: str,
+    cwd: Path,
+) -> None:
+    """Save the branch's record: the live entries, then skipped gone ones."""
+    entries = list(live)
+    # Preserve skipped gone entries so they reappear next sync
+    for group in plan.gone:
+        for a in group.actions:
+            if a.kind == ActionKind.SKIP and a.old_entry:
+                entries.append(_entry(
+                    branch_name, a.old_entry.review_id, a.old_entry.subject,
+                    a.old_entry.diff_hash, a.old_entry.series,
+                ))
+    entries = [replace(e, position=n) for n, e in enumerate(entries, 1)]
+
+    if not entries:
+        # No review is left on the branch (say every live row is a create
+        # that did not happen): the record must still drop the reviews
+        # closed or forgotten above.
+        review_store.clear_branch(branch_name, cwd=cwd)
+        return
+
+    review_store.save_reviews(entries, cwd=cwd)
+    new_hashes = {e.diff_hash for e in entries if e.diff_hash != _POST_FAILED}
+    diff_cache.save_hashes(new_hashes, cwd=cwd, branch=branch_name)
+    # Reviews adopted from a branch that is gone (renamed or deleted) now
+    # live on this branch only: drop them from its record. Its other
+    # reviews stay there (still open on ReviewBoard).
+    recorded = {e.review_id for e in entries if e.review_id}
+    for b in sorted(plan.adopted_from):
+        if not git.branch_exists(b, cwd=cwd):
+            review_store.remove_reviews(b, recorded, cwd=cwd)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -339,46 +403,28 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     print()
-    entries, failed = _execute(
-        plan,
-        branch_name=branch_name,
-        tracking=tracking,
-        renumber=args.renumber,
-        publish=args.publish,
-        verbose=args.verbose,
-        explicit_branch=args.branch,
-        initial_depends=args.depends_on,
-        reviewers=args.users or None,
-        groups=args.groups or None,
-        no_numbers=args.no_numbers,
-        cwd=cwd,
-    )
-
-    # Preserve skipped gone entries so they reappear next sync
-    for group in plan.gone:
-        for a in group.actions:
-            if a.kind == ActionKind.SKIP and a.old_entry:
-                entries.append(review_store.ReviewEntry(
-                    branch=branch_name,
-                    position=len(entries) + 1,
-                    review_id=a.old_entry.review_id,
-                    subject=a.old_entry.subject,
-                    diff_hash=a.old_entry.diff_hash,
-                    series=a.old_entry.series,
-                ))
-
-    # Save state, also after a failed post: what was done stays recorded.
-    if entries:
-        review_store.save_reviews(entries, cwd=cwd)
-        new_hashes = {e.diff_hash for e in entries if e.diff_hash != _POST_FAILED}
-        diff_cache.save_hashes(new_hashes, cwd=cwd, branch=branch_name)
-        # Reviews adopted from a branch that is gone (renamed or deleted)
-        # now live on this branch only: drop them from its record. Its
-        # other reviews stay there (still open on ReviewBoard).
-        recorded = {e.review_id for e in entries if e.review_id}
-        for b in sorted(plan.adopted_from):
-            if not git.branch_exists(b, cwd=cwd):
-                review_store.remove_reviews(b, recorded, cwd=cwd)
+    _close_gone(plan, verbose=args.verbose, cwd=cwd)
+    rows = _live_rows(plan, branch_name=branch_name, renumber=args.renumber)
+    record = [row.held for row in rows]
+    try:
+        failed = _execute(
+            rows,
+            record,
+            branch_name=branch_name,
+            tracking=tracking,
+            publish=args.publish,
+            verbose=args.verbose,
+            explicit_branch=args.branch,
+            initial_depends=args.depends_on,
+            reviewers=args.users or None,
+            groups=args.groups or None,
+            no_numbers=args.no_numbers,
+            cwd=cwd,
+        )
+    finally:
+        # Save state, also after a failed post or an exception (Ctrl-C, a
+        # failed ReviewBoard lookup): what was done stays recorded.
+        _save(plan, [e for e in record if e], branch_name=branch_name, cwd=cwd)
 
     if failed:
         print(
