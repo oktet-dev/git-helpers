@@ -235,22 +235,6 @@ def _execute(
     return entries, failed
 
 
-def _edit_interactively(plan: SeriesPlan, *, renumber: bool) -> bool:
-    """Let the user edit the plan's action kinds in $EDITOR.
-
-    The editor sees one flat list: live series in order, then gone groups.
-    Returns False when the user aborted.
-    """
-    actions = _all_actions(plan)
-    edited = edit_plan(actions, renumber=renumber)
-    if edited is None:
-        return False
-    for action, new in zip(actions, edited):
-        action.kind = new.kind
-        action.needs_dep_update = new.needs_dep_update
-    return True
-
-
 def run(args: argparse.Namespace) -> int:
     """Execute the rbt-sync subcommand."""
     cwd = Path.cwd()
@@ -318,9 +302,14 @@ def run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
-    if args.interactive and not _edit_interactively(plan, renumber=args.renumber):
-        print("Aborted.")
-        return 0
+    if args.interactive:
+        edited = edit_plan(
+            plan, renumber=args.renumber, separators=args.range is None,
+        )
+        if edited is None:
+            print("Aborted.")
+            return 0
+        plan = edited
 
     # --force: re-post every matched commit in the range, ignoring diff
     # hash. Runs AFTER the interactive editor so the user can still skip

@@ -8,6 +8,7 @@ import pytest
 
 from gg.matcher import ActionKind, NewCommit, SyncAction
 from gg.review_store import ReviewEntry
+from gg.series import GoneGroup, Series, SeriesPlan
 from gg.sync_edit import (
     _ACTION_KEYS,
     _build_editor_cmd,
@@ -47,6 +48,28 @@ def _action(
     )
 
 
+def _plan(*series_actions, gone=()):
+    return SeriesPlan([Series(i, list(a)) for i, a in enumerate(series_actions, 1)],
+                      [GoneGroup(1, list(gone))] if gone else [], [], set())
+
+
+def _keep(rid: str, subject: str, pos: int = 1) -> SyncAction:
+    return _action(ActionKind.KEEP, rid=rid, rev=f"r{rid}", pos=pos, subject=subject)
+
+
+def _split(actions: list[SyncAction]) -> SeriesPlan:
+    """One-series plan; discards go into a gone group."""
+    live = [a for a in actions if a.kind != ActionKind.DISCARD]
+    gone = [a for a in actions if a.kind == ActionKind.DISCARD]
+    return _plan(live, gone=gone)
+
+
+def _kinds(plan: SeriesPlan) -> list[ActionKind]:
+    return [a.kind for s in plan.series for a in s.actions] + [
+        a.kind for g in plan.gone for a in g.actions
+    ]
+
+
 class TestSerializeRoundtrip:
     def test_serialize_then_parse_unchanged(self) -> None:
         actions = [
@@ -55,31 +78,30 @@ class TestSerializeRoundtrip:
             _action(ActionKind.CREATE, rev="a3", pos=3, subject="new feature"),
             _action(ActionKind.DISCARD, rid="1002", subject="temporary hack"),
         ]
-        text = serialize_plan(actions, renumber=True)
-        result = parse_plan(text, actions)
+        text = serialize_plan(_split(actions), renumber=True)
+        result = parse_plan(text, _split(actions))
         assert result is not None
-        assert len(result) == len(actions)
-        for orig, parsed in zip(actions, result):
-            assert parsed.kind == orig.kind
+        assert len(_kinds(result)) == len(actions)
+        assert _kinds(result) == _kinds(_split(actions))
 
 
 class TestTransitions:
     def test_update_to_keep(self) -> None:
         actions = [_action(ActionKind.UPDATE, rid="1000", rev="a1", subject="fix")]
-        text = serialize_plan(actions, renumber=True)
+        text = serialize_plan(_split(actions), renumber=True)
         lines = text.splitlines()
         for i, line in enumerate(lines):
             if line.startswith("update"):
                 lines[i] = line.replace("update", "keep  ", 1)
                 break
         text = "\n".join(lines)
-        result = parse_plan(text, actions)
+        result = parse_plan(text, _split(actions))
         assert result is not None
-        assert result[0].kind == ActionKind.KEEP
+        assert _kinds(result)[0] == ActionKind.KEEP
 
     def test_keep_to_update(self) -> None:
         actions = [_action(ActionKind.KEEP, rid="1000", rev="a1", subject="fix")]
-        text = serialize_plan(actions, renumber=True)
+        text = serialize_plan(_split(actions), renumber=True)
         # Replace action token in data line (not in header comments)
         lines = text.splitlines()
         for i, line in enumerate(lines):
@@ -87,55 +109,55 @@ class TestTransitions:
                 lines[i] = line.replace("keep", "update", 1)
                 break
         text = "\n".join(lines)
-        result = parse_plan(text, actions)
+        result = parse_plan(text, _split(actions))
         assert result is not None
-        assert result[0].kind == ActionKind.UPDATE
+        assert _kinds(result)[0] == ActionKind.UPDATE
 
     def test_keepdep_to_keep(self) -> None:
         actions = [
             _action(ActionKind.KEEP_DEP, rid="1000", rev="a1", needs_dep=True),
         ]
-        text = serialize_plan(actions, renumber=True)
+        text = serialize_plan(_split(actions), renumber=True)
         lines = text.splitlines()
         for i, line in enumerate(lines):
             if line.startswith("keep+dep"):
                 lines[i] = line.replace("keep+dep", "keep     ", 1)
                 break
         text = "\n".join(lines)
-        result = parse_plan(text, actions)
+        result = parse_plan(text, _split(actions))
         assert result is not None
-        assert result[0].kind == ActionKind.KEEP
-        assert result[0].needs_dep_update is False
+        assert _kinds(result)[0] == ActionKind.KEEP
+        assert result.series[0].actions[0].needs_dep_update is False
 
     def test_create_to_skip(self) -> None:
         actions = [_action(ActionKind.CREATE, rev="a1", pos=1, subject="new")]
-        text = serialize_plan(actions, renumber=True)
+        text = serialize_plan(_split(actions), renumber=True)
         lines = text.splitlines()
         for i, line in enumerate(lines):
             if line.startswith("create"):
                 lines[i] = line.replace("create", "skip   ", 1)
                 break
         text = "\n".join(lines)
-        result = parse_plan(text, actions)
+        result = parse_plan(text, _split(actions))
         assert result is not None
-        assert result[0].kind == ActionKind.SKIP
+        assert _kinds(result)[0] == ActionKind.SKIP
 
     def test_discard_to_skip(self) -> None:
         actions = [_action(ActionKind.DISCARD, rid="1002", subject="temp")]
-        text = serialize_plan(actions, renumber=True)
+        text = serialize_plan(_split(actions), renumber=True)
         lines = text.splitlines()
         for i, line in enumerate(lines):
             if line.startswith("discard"):
                 lines[i] = line.replace("discard", "skip   ", 1)
                 break
         text = "\n".join(lines)
-        result = parse_plan(text, actions)
+        result = parse_plan(text, _split(actions))
         assert result is not None
-        assert result[0].kind == ActionKind.SKIP
+        assert _kinds(result)[0] == ActionKind.SKIP
 
     def test_invalid_transition_raises(self) -> None:
         actions = [_action(ActionKind.KEEP, rid="1000", rev="a1")]
-        text = serialize_plan(actions, renumber=True)
+        text = serialize_plan(_split(actions), renumber=True)
         lines = text.splitlines()
         for i, line in enumerate(lines):
             if line.startswith("keep"):
@@ -143,17 +165,17 @@ class TestTransitions:
                 break
         text = "\n".join(lines)
         with pytest.raises(ValueError, match="cannot change"):
-            parse_plan(text, actions)
+            parse_plan(text, _split(actions))
 
 
 class TestParseEdgeCases:
     def test_empty_file_returns_none(self) -> None:
         actions = [_action(ActionKind.KEEP, rid="1000", rev="a1")]
-        assert parse_plan("", actions) is None
+        assert parse_plan("", _split(actions)) is None
 
     def test_only_comments_returns_none(self) -> None:
         actions = [_action(ActionKind.KEEP, rid="1000", rev="a1")]
-        assert parse_plan("# just a comment\n# another\n", actions) is None
+        assert parse_plan("# just a comment\n# another\n", _split(actions)) is None
 
     def test_wrong_line_count_raises(self) -> None:
         actions = [
@@ -162,22 +184,22 @@ class TestParseEdgeCases:
         ]
         text = "keep  [1/2]  r/1000  test\n"
         with pytest.raises(ValueError, match="Expected 2"):
-            parse_plan(text, actions)
+            parse_plan(text, _split(actions))
 
     def test_comments_and_blanks_ignored(self) -> None:
         actions = [_action(ActionKind.KEEP, rid="1000", rev="a1", subject="fix")]
-        text = serialize_plan(actions, renumber=True)
+        text = serialize_plan(_split(actions), renumber=True)
         # Add extra comments and blank lines
         text = "# extra comment\n\n" + text + "\n# trailing\n\n"
-        result = parse_plan(text, actions)
+        result = parse_plan(text, _split(actions))
         assert result is not None
-        assert result[0].kind == ActionKind.KEEP
+        assert _kinds(result)[0] == ActionKind.KEEP
 
     def test_unknown_action_raises(self) -> None:
         actions = [_action(ActionKind.KEEP, rid="1000", rev="a1")]
         text = "bogus  [1/1]  r/1000  test\n"
         with pytest.raises(ValueError, match="unknown action"):
-            parse_plan(text, actions)
+            parse_plan(text, _split(actions))
 
 
 class TestGetEditor:
@@ -312,27 +334,102 @@ class TestSerializeWithEditor:
             _action(ActionKind.KEEP, rid="1000", rev="a1", pos=1, subject="fix"),
             _action(ActionKind.UPDATE, rid="1001", rev="a2", pos=2, subject="add"),
         ]
-        text = serialize_plan(actions, renumber=True, editor="vim")
-        result = parse_plan(text, actions)
+        text = serialize_plan(_split(actions), renumber=True, editor="vim")
+        result = parse_plan(text, _split(actions))
         assert result is not None
-        assert len(result) == len(actions)
-        for orig, parsed in zip(actions, result):
-            assert parsed.kind == orig.kind
+        assert len(_kinds(result)) == len(actions)
+        assert _kinds(result) == _kinds(_split(actions))
 
     def test_roundtrip_with_emacs(self) -> None:
         actions = [
             _action(ActionKind.CREATE, rev="a1", pos=1, subject="new"),
         ]
-        text = serialize_plan(actions, renumber=True, editor="emacs")
-        result = parse_plan(text, actions)
+        text = serialize_plan(_split(actions), renumber=True, editor="emacs")
+        result = parse_plan(text, _split(actions))
         assert result is not None
-        assert result[0].kind == ActionKind.CREATE
+        assert _kinds(result)[0] == ActionKind.CREATE
 
     def test_no_editor_backward_compat(self) -> None:
         actions = [
             _action(ActionKind.KEEP, rid="1000", rev="a1", pos=1, subject="fix"),
         ]
-        text = serialize_plan(actions, renumber=True)
-        result = parse_plan(text, actions)
+        text = serialize_plan(_split(actions), renumber=True)
+        result = parse_plan(text, _split(actions))
         assert result is not None
-        assert result[0].kind == ActionKind.KEEP
+        assert _kinds(result)[0] == ActionKind.KEEP
+
+
+class TestSeparators:
+    def test_separator_written_between_series(self) -> None:
+        plan = _plan([_keep("1", "a")], [_keep("2", "b", pos=1)])
+        lines = [l for l in serialize_plan(plan).splitlines() if l and not l.startswith("#")]
+        assert lines[1] == "---"
+
+    def test_deleting_separator_merges_and_updates(self) -> None:
+        plan = _plan([_keep("1", "a")], [_keep("2", "b", pos=1)])
+        text = serialize_plan(plan).replace("\n---\n", "\n")
+        merged = parse_plan(text, plan)
+        assert [len(s.actions) for s in merged.series] == [2]
+        assert [a.kind.value for a in merged.series[0].actions] == ["update", "update"]
+
+    def test_adding_separator_splits(self) -> None:
+        plan = _plan([_keep("1", "a"), _keep("2", "b", pos=2)])
+        rows = serialize_plan(plan).splitlines()
+        i = next(n for n, l in enumerate(rows) if l.endswith(" b"))
+        split = parse_plan("\n".join(rows[:i] + ["---"] + rows[i:]), plan)
+        assert [len(s.actions) for s in split.series] == [1, 1]
+        assert [s.number for s in split.series] == [1, 2]
+        assert _kinds(split) == [ActionKind.UPDATE, ActionKind.UPDATE]
+
+    def test_separator_rejected_with_range(self) -> None:
+        plan = _plan([_keep("1", "a"), _keep("2", "b", pos=2)])
+        text = serialize_plan(plan, separators=False)
+        rows = text.splitlines()
+        assert "---" not in rows
+        assert "cannot be split or merged" in text
+        with pytest.raises(ValueError):
+            parse_plan("\n".join(rows[:-1] + ["---"] + rows[-1:]), plan, separators=False)
+
+    def test_submit_can_become_discard(self) -> None:
+        sub = SyncAction(ActionKind.SUBMIT, ReviewEntry("s", 1, "9", "x", "h"), None, None)
+        plan = _plan([_keep("1", "a")], gone=[sub])
+        text = "\n".join("discard" + l[len("submit"):] if l.startswith("submit") else l
+                         for l in serialize_plan(plan).splitlines())
+        assert parse_plan(text, plan).gone[0].actions[0].kind is ActionKind.DISCARD
+
+    def test_forget_transitions(self) -> None:
+        fg = SyncAction(ActionKind.FORGET, ReviewEntry("s", 1, "9", "x", "h"), None, None)
+        plan = _plan([_keep("1", "a")], gone=[fg])
+        lines = serialize_plan(plan).splitlines()
+        for target in ("skip", "discard", "submit"):
+            edited = "\n".join(
+                f"{target:<7}" + l[len("forget "):] if l.startswith("forget ") else l
+                for l in lines
+            )
+            assert parse_plan(edited, plan).gone[0].actions[0].kind.value == target
+
+    def test_bad_separator_placement(self) -> None:
+        sub = SyncAction(ActionKind.SUBMIT, ReviewEntry("s", 1, "9", "x", "h"), None, None)
+        plan = _plan([_keep("1", "a")], [_keep("2", "b", pos=1)], gone=[sub])
+        rows = [l for l in serialize_plan(plan).splitlines() if l and not l.startswith("#")]
+        a, sep, b, gone = rows
+        for bad in ([sep, a, b, gone], [a, sep, sep, b, gone],
+                    [a, sep, b, sep, gone], [a, sep, b, gone, sep]):
+            with pytest.raises(ValueError):
+                parse_plan("\n".join(bad), plan)
+
+    def test_unchanged_series_keep_actions_and_renumber(self) -> None:
+        plan = _plan([_keep("1", "a")], [_keep("2", "b", pos=1)], [_keep("3", "c", pos=1)])
+        text = serialize_plan(plan).replace("\n---\n", "\n", 1)
+        edited = parse_plan(text, plan)
+        assert [s.number for s in edited.series] == [1, 2]
+        assert [a.kind.value for a in edited.series[1].actions] == ["keep"]
+        assert edited.series[1].was == 3
+
+    def test_hidden_rows_not_written(self) -> None:
+        hidden = _keep("2", "hid", pos=2)
+        hidden.outside_range = True
+        plan = _plan([_keep("1", "a"), hidden])
+        text = serialize_plan(plan, separators=False)
+        assert "hid" not in text
+        assert parse_plan(text, plan, separators=False).series[0].actions[1] is hidden

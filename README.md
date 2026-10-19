@@ -56,7 +56,7 @@ operations support `-d`/`--dry` for dry-run.
 | `git gg rbt` | Post commit series to ReviewBoard |
 | `git gg rbt-sync` | Reconcile the branch's series with ReviewBoard (keep/update/create/discard/submit/forget) |
 | `git gg rbt-sync <range>` | Post only the commits in `<range>`; posted commits outside it are not re-posted (reviews of commits gone from the branch are still closed or forgotten) |
-| `git gg rbt-sync -i` | Interactive mode -- edit the sync plan in `$EDITOR` before executing |
+| `git gg rbt-sync -i` | Interactive mode -- edit the sync plan in `$EDITOR` before executing; `---` lines separate series (delete one to merge two series, add one between two rows to split; changed series are renumbered and re-posted). With a range, series cannot be split or merged |
 | `git gg rbt-sync -U alice -G devteam` | Override reviewers/groups for new reviews |
 | `git gg rbt-sync --no-numbers` | Suppress `[i/N]:` prefix on posted reviews |
 | `git gg rbt-sync --renumber` | Full `[1/N]..[N/N]` renumber instead of fractional |
@@ -166,7 +166,8 @@ commit:
 # See what changed
 git gg rbt-sync -d
 
-# Edit the plan before executing (skip a discard, defer a create, etc.)
+# Edit the plan before executing (skip a discard, defer a create, etc.).
+# Delete a `---` line to merge two series, add one to split a series.
 git gg rbt-sync -i
 
 # Or just execute the plan directly
