@@ -226,8 +226,12 @@ else:
 
 
 @pytest.fixture
-def rbt_mock(tmp_path: Path) -> RbtMock:
-    """Create a mock rbt script that logs calls and prints fake review IDs."""
+def rbt_mock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> RbtMock:
+    """Create a mock rbt script that logs calls and prints fake review IDs.
+
+    The mock is also put first on PATH for in-process calls, so a test can
+    never reach the real rbt.
+    """
     mock_dir = tmp_path / "rbt_mock_bin"
     mock_dir.mkdir()
     log_file = tmp_path / "rbt_calls.log"
@@ -239,6 +243,7 @@ def rbt_mock(tmp_path: Path) -> RbtMock:
     script = mock_dir / "rbt"
     script.write_text(_MOCK_RBT_SCRIPT)
     script.chmod(0o755)
+    monkeypatch.setenv("PATH", str(mock_dir) + os.pathsep + os.environ.get("PATH", ""))
 
     return RbtMock(script_dir=mock_dir, log_file=log_file)
 
