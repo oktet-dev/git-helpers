@@ -56,6 +56,7 @@ operations support `-d`/`--dry` for dry-run.
 | `git gg rbt` | Post commit series to ReviewBoard |
 | `git gg rbt-sync` | Reconcile the branch's series with ReviewBoard (keep/update/create/discard/submit/forget) |
 | `git gg rbt-sync <range>` | Post only the commits in `<range>`; posted commits outside it are not re-posted, except for a dependency-only re-post (`keep+dep`) of an unchanged one (reviews of commits gone from the branch are still closed or forgotten) |
+| `git gg rbt-sync -s 3` | Act only on series 3 as numbered by `rbt-sync -d` (same as giving its range; `-s 3,4` for several; not combined with a range) |
 | `git gg rbt-sync -i` | Interactive mode -- edit the sync plan in `$EDITOR` before executing; `---` lines separate series (delete one to merge two series, add one between two rows to split; changed series are renumbered and re-posted). With a range, series cannot be split or merged |
 | `git gg rbt-sync -U alice -G devteam` | Override reviewers/groups for new reviews |
 | `git gg rbt-sync --no-numbers` | Suppress `[i/N]:` prefix on posted reviews |

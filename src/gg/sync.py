@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import sys
 from collections import Counter
 from dataclasses import dataclass, replace
@@ -50,8 +51,21 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
                         "series recorded under other branches are still picked up")
     p.add_argument("--close", action="store_true",
                    help="close all reviews as submitted and clear DB")
+    p.add_argument("-s", "--series", action="append", default=[], type=_series_numbers,
+                   metavar="N[,N...]",
+                   help="act only on these series (numbers as shown by -d); not with a range")
     p.add_argument("range", nargs="?", default=None, help="revision range (default: tracking..HEAD)")
     p.set_defaults(func=run)
+
+
+def _series_numbers(text: str) -> list[int]:
+    """Parse a -s value such as "3" or "3,4" into series numbers."""
+    numbers = []
+    for token in text.split(","):
+        if not token.strip().isdigit() or int(token) < 1:
+            raise argparse.ArgumentTypeError(f"invalid series number: {token!r}")
+        numbers.append(int(token))
+    return numbers
 
 
 def _number_matches(action: SyncAction, num_str: str, old_total: int) -> bool:
@@ -337,6 +351,11 @@ def run(args: argparse.Namespace) -> int:
         print(f"Closed {len(old)} review(s) as submitted.", file=sys.stderr)
         return 0
 
+    wanted = sorted({n for numbers in args.series for n in numbers})
+    if wanted and args.range:
+        print("[gg] -s and a range cannot be combined.", file=sys.stderr)
+        return 1
+
     # The whole branch decides series and what is gone; the range only
     # limits which commits are acted on.
     base = git.range_base(cwd=cwd)
@@ -364,17 +383,43 @@ def run(args: argparse.Namespace) -> int:
         for b in review_store.list_branches(cwd=cwd)
         if b != branch_name
     }
-    plan = build_plan(
-        branch=branch_name,
-        own=own,
-        foreign=foreign,
-        commits=_build_new_commits(full, cwd=cwd),
-        in_range=set(selected),
-        landed_subjects=lambda: git.upstream_subjects(base, cwd=cwd),
-        branch_exists=lambda name: git.branch_exists(name, cwd=cwd),
-        depends_on_of=lambda review_id: rb_api.fetch_depends_on(review_id, cwd=cwd),
-        initial_depends=args.depends_on,
+    commits = _build_new_commits(full, cwd=cwd)
+    # -s plans the branch twice; cache the lookups so RB is read once.
+    landed = functools.cache(lambda: git.upstream_subjects(base, cwd=cwd))
+    depends_on_of = functools.cache(
+        lambda review_id: rb_api.fetch_depends_on(review_id, cwd=cwd),
     )
+
+    def plan_for(in_range: set[str]) -> SeriesPlan:
+        return build_plan(
+            branch=branch_name,
+            own=own,
+            foreign=foreign,
+            commits=commits,
+            in_range=in_range,
+            landed_subjects=landed,
+            branch_exists=lambda name: git.branch_exists(name, cwd=cwd),
+            depends_on_of=depends_on_of,
+            initial_depends=args.depends_on,
+        )
+
+    if wanted:
+        whole = plan_for(set(full))
+        if wanted[-1] > len(whole.series):
+            print(
+                f"[gg] no series {wanted[-1]} on '{branch_name}' "
+                f"(it has {len(whole.series)}).",
+                file=sys.stderr,
+            )
+            return 1
+        revs = {
+            a.new_commit.rev
+            for s in whole.series if s.number in wanted
+            for a in s.actions if a.new_commit
+        }
+        selected = [rev for rev in full if rev in revs]
+
+    plan = plan_for(set(selected))
     for warning in dict.fromkeys(plan.warnings):
         print(f"[gg] {warning}", file=sys.stderr)
     if not own and not plan.adopted_from and not args.new:
@@ -386,7 +431,8 @@ def run(args: argparse.Namespace) -> int:
     if args.interactive:
         try:
             edited = edit_plan(
-                plan, renumber=args.renumber, separators=args.range is None,
+                plan, renumber=args.renumber,
+                separators=args.range is None and not wanted,
             )
         except ValueError as e:
             print(f"[gg] {e}", file=sys.stderr)

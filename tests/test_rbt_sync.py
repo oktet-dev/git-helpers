@@ -1187,6 +1187,60 @@ class TestSeries:
         assert git_repo.run_gg("db", "--all").stdout == before
 
 
+class TestSeriesOption:
+    """-s N acts on the commits of series N as numbered in the full plan."""
+
+    def _posted_stack(self, git_repo: GitRepo) -> None:
+        """Series 1 (s1,s2) and 2 (c1,c2) posted; n1 would be new series 3."""
+        TestSeries._stack(self, git_repo)
+        assert git_repo.run_gg("rbt-sync", "master..HEAD~1").returncode == 0
+
+    def test_series_acts_like_its_range(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._posted_stack(git_repo)
+        calls = rbt_mock.call_count()
+        r = git_repo.run_gg("rbt-sync", "-s", "3")
+        assert r.returncode == 0, r.stderr
+        posts = [c for c in rbt_mock.calls()[calls:] if c and c[0] == "post"]
+        assert len(posts) == 1
+        assert "--summary=[1/1]: n1" in posts[0]
+        assert not [c for c in rbt_mock.calls() if c and c[0] == "close"]
+
+    def test_other_series_shown_outside_range(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._posted_stack(git_repo)
+        out = _plain(git_repo.run_gg("rbt-sync", "-d", "-s", "2").stdout)
+        assert "Series 1: 2 patches, outside range" in out
+        assert "Series 2: 2 patches, depends on" in out
+        assert "create" not in out
+
+    def test_several_series(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._posted_stack(git_repo)
+        out = _plain(git_repo.run_gg("rbt-sync", "-d", "-s", "2,3").stdout)
+        assert "Series 1: 2 patches, outside range" in out
+        assert re.search(r"\[1/1\]\s+create", out)
+
+    def test_unknown_series_refused(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._posted_stack(git_repo)
+        calls = rbt_mock.call_count()
+        r = git_repo.run_gg("rbt-sync", "-s", "9")
+        assert r.returncode == 1
+        assert "no series 9" in r.stderr
+        assert rbt_mock.call_count() == calls
+
+    def test_series_with_range_refused(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._posted_stack(git_repo)
+        calls = rbt_mock.call_count()
+        r = git_repo.run_gg("rbt-sync", "-s", "2", "HEAD~1..HEAD")
+        assert r.returncode == 1
+        assert "-s" in r.stderr and "range" in r.stderr
+        assert rbt_mock.call_count() == calls
+
+    def test_bad_series_value(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._posted_stack(git_repo)
+        r = git_repo.run_gg("rbt-sync", "-s", "two")
+        assert r.returncode == 2
+        assert "series" in r.stderr
+
+
 class TestPartialLanding:
     def _post_and_land(self, git_repo: GitRepo, landed: int) -> list[str]:
         """Post a1..a5, land the first `landed` upstream, rebase on it."""
