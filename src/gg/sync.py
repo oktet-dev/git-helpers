@@ -53,10 +53,15 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p.set_defaults(func=run)
 
 
-def _number_matches(old_entry: review_store.ReviewEntry, num_str: str, old_total: int) -> bool:
-    """True when the old review already has the correct number prefix."""
-    old_num_str = f"[{old_entry.position}/{old_total}]"
-    return old_num_str == num_str
+def _number_matches(action: SyncAction, num_str: str, old_total: int) -> bool:
+    """True when the review already has the correct number prefix.
+
+    It was posted with its rank as recorded, not the one it is shown with
+    now (which no longer counts reviews that left its series).
+    """
+    assert action.old_entry is not None
+    rank = action.old_rank if action.old_rank is not None else action.old_entry.position
+    return f"[{rank}/{old_total}]" == num_str
 
 
 def _build_new_commits(revs: list[str], *, cwd: Path) -> list[NewCommit]:
@@ -152,7 +157,7 @@ def _live_rows(plan: SeriesPlan, *, branch_name: str, renumber: bool) -> list[_R
                     and not action.needs_dep_update
                     and (not renumber
                          or _number_matches(
-                             old, num_str, old_sizes[(old.branch, old.series)]))):
+                             action, num_str, old_sizes[(old.branch, old.series)]))):
                 # Nothing about the commit changed.
                 assert old is not None
                 post = False

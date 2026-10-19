@@ -101,7 +101,9 @@ def build_plan(
     `own` is this branch's record, `foreign` other branches' records,
     `commits` the full branch (oldest first) and `in_range` the revs the
     user's range selects. Returned actions carry copies of the recorded
-    entries whose `position` is their rank inside their old series.
+    entries whose `position` is their rank among the reviews of their old
+    series still in their live series (gone ones: inside their old
+    series); `old_rank` is the rank as recorded.
 
     `landed_subjects` (upstream's recent subjects) is called at most once,
     only when a recorded commit is gone. `depends_on_of` (a review's
@@ -127,6 +129,7 @@ def build_plan(
     _join_moved_runs(rows)
     rows = _place_unrecorded(rows, in_range)
     _hold_outside_range(rows, in_range)
+    _rank_live(rows, own, foreign)
     series = _number(rows)
     gone = _gone(branch, unmatched, foreign, landed_subjects, branch_exists)
     submitted = {
@@ -269,6 +272,7 @@ def _match(
             continue
         if source:
             action.old_entry = replace(source.entry, position=source.rank)
+            action.old_rank = source.rank
         rows.append(_Row(action, source, source.key if source else None))
     return rows, unmatched
 
@@ -351,6 +355,34 @@ def _hold_outside_range(rows: list[_Row], in_range: set[str]) -> None:
             row.action.outside_range = True
 
 
+def _rank_live(
+    rows: list[_Row], own: list[ReviewEntry], foreign: dict[str, list[ReviewEntry]],
+) -> None:
+    """Rank recorded rows among their old series' reviews in their live series.
+
+    The rank becomes old_entry.position, the `i` a row is numbered `[i/N]`
+    with: reviews gone from the branch, or moved to another series, no
+    longer count, so the rest of a partly landed series shows and posts
+    [1/2], [2/2] rather than [4/2], [5/2]. old_rank keeps the rank as
+    recorded.
+    """
+    recorded: dict[tuple[str | None, int], list[str]] = {}
+    for origin, entries in [(None, own), *foreign.items()]:
+        for entry in sorted(entries, key=lambda e: e.position):
+            recorded.setdefault((origin, entry.series), []).append(entry.review_id)
+    live: dict[_Key, set[str]] = {}
+    for row in rows:
+        if row.source and not row.action.moved:
+            live.setdefault(row.key, set()).add(row.source.entry.review_id)
+    for row in rows:
+        if row.source is None or row.action.moved:
+            continue
+        source = row.source
+        before = recorded[(source.origin, source.entry.series)][:source.rank]
+        rank = sum(review_id in live[row.key] for review_id in before)
+        row.action.old_entry = replace(row.action.old_entry, position=rank)
+
+
 def _number(rows: list[_Row]) -> list[Series]:
     """Number the live series 1..K in branch order."""
     groups: dict[_Key, list[SyncAction]] = {}
@@ -408,6 +440,7 @@ def _gone(
             new_commit=None,
             new_position=None,
             forget_branch=holder,
+            old_rank=source.rank,
         ))
     return [GoneGroup(number, groups[number]) for number in sorted(groups)]
 

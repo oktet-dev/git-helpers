@@ -49,6 +49,9 @@ class SyncAction:
     moved: bool = False
     # Branch that still records a forgotten review
     forget_branch: str | None = None
+    # Rank of old_entry inside its old series as recorded, i.e. the number
+    # ReviewBoard shows; old_entry.position may be renumbered for display
+    old_rank: int | None = None
 
 
 def content_changed(entry: ReviewEntry, commit: NewCommit) -> bool:

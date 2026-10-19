@@ -1,6 +1,9 @@
 """Tests for gg.series -- planning a branch as a list of series."""
 
+from copy import deepcopy
+
 from gg.matcher import NewCommit
+from gg.numbering import number_series
 from gg.review_store import ReviewEntry
 from gg.series import build_plan
 
@@ -262,6 +265,43 @@ def test_forget_wins_over_landed():
     plan = plan_of(own, [commit("k")], foreign=foreign, landed={"shared", "[3/3]: gone"},
                    live={"other"})
     assert [a.kind.value for a in plan.gone[0].actions] == ["forget", "submit"]
+
+
+def labels(plan):
+    return [[label for _, label in number_series(s)] for s in plan.series]
+
+
+def test_old_entry_rank_counts_reviews_still_in_the_series():
+    # old_entry.position is the rank among the old series' reviews still in
+    # its live series (the [i] it is shown and posted with); old_rank is the
+    # rank as recorded (what ReviewBoard shows); old_entry.series is the old
+    # series number. The caller's entries are not changed.
+    own = [entry("stack", 1, "1", "a1"), entry("stack", 2, "2", "a2"),
+           entry("stack", 3, "3", "a3"), entry("stack", 4, "4", "a4"),
+           entry("stack", 5, "5", "b1", series=2), entry("stack", 6, "6", "b2", series=2)]
+    before = deepcopy(own)
+    plan = plan_of(own, [commit(s) for s in ("a3", "a4", "b1", "b2")], landed={"a1", "a2"})
+    assert [(a.old_entry.position, a.old_rank, a.old_entry.series)
+            for s in plan.series for a in s.actions] == [(1, 3, 1), (2, 4, 1), (1, 1, 2), (2, 2, 2)]
+    assert labels(plan) == [["[1/2]", "[2/2]"], ["[1/2]", "[2/2]"]]
+    assert [(a.old_entry.position, a.old_rank) for a in plan.gone[0].actions] == [(1, 1), (2, 2)]
+    assert own == before
+
+
+def test_later_part_of_foreign_series_numbered_from_one():
+    foreign = {"base": [entry("base", 1, "1000", "s1"), entry("base", 2, "1001", "s2"),
+                        entry("base", 3, "1002", "s3")]}
+    plan = plan_of([], [commit("s2"), commit("s3"), commit("n")], foreign=foreign)
+    assert [(a.old_entry.position, a.old_rank) for a in plan.series[0].actions] == [(1, 2), (2, 3)]
+    assert labels(plan) == [["[1/2]", "[2/2]"], ["[1/1]"]]
+
+
+def test_foreign_entry_joining_own_series_counts_its_reviews():
+    own = [entry("stack", 1, "1000", "a"), entry("stack", 2, "1001", "b")]
+    foreign = {"base": [entry("base", 1, "1000", "a"), entry("base", 2, "1001", "b"),
+                        entry("base", 3, "1002", "c")]}
+    plan = plan_of(own, [commit("a"), commit("b"), commit("c")], foreign=foreign)
+    assert labels(plan) == [["[1/3]", "[2/3]", "[3/3]"]]
 
 
 def test_lookups_lazy_and_once():

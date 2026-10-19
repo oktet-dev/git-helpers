@@ -1141,6 +1141,63 @@ class TestSeries:
         assert git_repo.run_gg("db", "--all").stdout == before
 
 
+class TestPartialLanding:
+    def _post_and_land(self, git_repo: GitRepo, landed: int) -> list[str]:
+        """Post a1..a5, land the first `landed` upstream, rebase on it."""
+        git_repo.create_branch("feat", "master")
+        for i in range(1, 6):
+            git_repo.commit(f"a{i}")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        ids = [e.review_id for e in review_store.load_reviews("feat", cwd=git_repo.work_dir)]
+        git_repo.git("checkout", "master")
+        assert git_repo.git("cherry-pick", f"master..feat~{5 - landed}").returncode == 0
+        git_repo.git("push", "origin", "master")
+        git_repo.git("checkout", "feat")
+        assert git_repo.git("rebase", "origin/master").returncode == 0
+        return ids
+
+    def _amend_last(self, git_repo: GitRepo, n: int) -> None:
+        revs = git_repo.git("log", "--reverse", "--format=%H", f"HEAD~{n}..HEAD").stdout.split()
+        git_repo.git("reset", "--hard", f"HEAD~{n}")
+        for i, rev in enumerate(revs):
+            git_repo.git("cherry-pick", rev)
+            (git_repo.work_dir / f"extra{i}").write_text("x\n")
+            git_repo.git("add", f"extra{i}")
+            git_repo.git("commit", "--amend", "--no-edit")
+
+    def test_survivors_numbered_from_one(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        ids = self._post_and_land(git_repo, 3)
+        self._amend_last(git_repo, 2)
+        out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
+        assert re.search(rf"\[1/2\]\s+update\s+\S+\s+r/{ids[3]}\s+a4", out)
+        assert re.search(rf"\[2/2\]\s+update\s+\S+\s+r/{ids[4]}\s+a5", out)
+
+        calls = rbt_mock.call_count()
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        posts = [c for c in rbt_mock.calls()[calls:] if c and c[0] == "post"]
+        assert [next(a for a in c if a.startswith("--summary=")) for c in posts] == [
+            "--summary=[1/2]: a4", "--summary=[2/2]: a5"]
+
+    def test_renumber_compares_with_the_posted_number(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        # a1 lands and x goes in below a2: plain numbers are [1/5] x,
+        # [2/5] a2 .. [5/5] a5 -- what a2..a5 already show on ReviewBoard.
+        ids = self._post_and_land(git_repo, 1)
+        revs = git_repo.git("log", "--reverse", "--format=%H", "origin/master..HEAD").stdout.split()
+        git_repo.git("reset", "--hard", "origin/master")
+        git_repo.commit("x")
+        for rev in revs:
+            git_repo.git("cherry-pick", rev)
+
+        calls = rbt_mock.call_count()
+        assert git_repo.run_gg("rbt-sync", "--renumber").returncode == 0
+        posts = [c for c in rbt_mock.calls()[calls:] if c and c[0] == "post"]
+        assert [next(a for a in c if a.startswith("--summary=")) for c in posts] == [
+            "--summary=[1/5]: x", "--summary=[2/5]: a2"]
+        assert posts[1][posts[1].index("-r") + 1] == ids[1]
+
+
 class TestAcceptance:
     """The spec's acceptance case, scaled down: series recorded under other
     branches both below and above the branch's own series, plus new commits.
