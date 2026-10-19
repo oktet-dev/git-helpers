@@ -46,7 +46,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p.add_argument("-n", "--no-numbers", action="store_true", help="don't number the patches")
     p.add_argument("-b", "--branch", default=None, help="explicit --branch for new reviews")
     p.add_argument("--new", action="store_true",
-                   help="forget old reviews, post current commits as a fresh series")
+                   help="forget this branch's own record and post its commits fresh; "
+                        "series recorded under other branches are still picked up")
     p.add_argument("--close", action="store_true",
                    help="close all reviews as submitted and clear DB")
     p.add_argument("range", nargs="?", default=None, help="revision range (default: tracking..HEAD)")
@@ -433,7 +434,9 @@ def run(args: argparse.Namespace) -> int:
 
     if failed:
         print(
-            "[gg] stopped after a failed post; run gg rbt-sync again to retry.",
+            "[gg] stopped after a failed post; run gg rbt-sync again to retry "
+            "(if a new series was cut short, use gg rbt-sync -i and delete "
+            'the "---" before the rest of it).',
             file=sys.stderr,
         )
         return 1

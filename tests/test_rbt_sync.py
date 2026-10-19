@@ -737,6 +737,17 @@ class TestCloseFlag:
 
 
 class TestNewFlag:
+    def test_help_says_other_branches_are_still_picked_up(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        r = git_repo.run_gg("rbt-sync", "-h")
+        assert r.returncode == 0
+        help_text = " ".join(r.stdout.split())
+        assert (
+            "--new forget this branch's own record and post its commits fresh; "
+            "series recorded under other branches are still picked up"
+        ) in help_text
+
     def test_new_bypasses_no_reviews_guard(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
     ) -> None:
@@ -1278,7 +1289,11 @@ class TestFailedPost:
         # -U: no reviewer lookup, so n1's post is the first rbt call
         r = git_repo.run_gg("rbt-sync", "-U", "alice")
         assert r.returncode == 1
-        assert "[gg] stopped after a failed post; run gg rbt-sync again to retry." in r.stderr
+        assert (
+            "[gg] stopped after a failed post; run gg rbt-sync again to retry "
+            "(if a new series was cut short, use gg rbt-sync -i and delete the "
+            '"---" before the rest of it).\n'
+        ) in r.stderr
         posts = [c for c in rbt_mock.calls()[calls:] if c and c[0] == "post"]
         assert len(posts) == 1  # n1's failed create; n2 not posted
         assert review_store.load_reviews("feature", cwd=git_repo.work_dir) == before

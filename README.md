@@ -55,7 +55,7 @@ operations support `-d`/`--dry` for dry-run.
 |---------|-------------|
 | `git gg rbt` | Post commit series to ReviewBoard |
 | `git gg rbt-sync` | Reconcile the branch's series with ReviewBoard (keep/update/create/discard/submit/forget) |
-| `git gg rbt-sync <range>` | Post only the commits in `<range>`; posted commits outside it are not re-posted (reviews of commits gone from the branch are still closed or forgotten) |
+| `git gg rbt-sync <range>` | Post only the commits in `<range>`; posted commits outside it are not re-posted, except for a dependency-only re-post (`keep+dep`) of an unchanged one (reviews of commits gone from the branch are still closed or forgotten) |
 | `git gg rbt-sync -i` | Interactive mode -- edit the sync plan in `$EDITOR` before executing; `---` lines separate series (delete one to merge two series, add one between two rows to split; changed series are renumbered and re-posted). With a range, series cannot be split or merged |
 | `git gg rbt-sync -U alice -G devteam` | Override reviewers/groups for new reviews |
 | `git gg rbt-sync --no-numbers` | Suppress `[i/N]:` prefix on posted reviews |
@@ -192,7 +192,8 @@ git gg rbt-sync -U alice -G devteam
 # Suppress [i/N]: numbering prefix
 git gg rbt-sync --no-numbers
 
-# Start a fresh series, forgetting old reviews
+# Forget this branch's own record and post its commits fresh (series
+# recorded under other branches are still picked up)
 git gg rbt-sync --new
 
 # After "Ship it!" on the whole series -- close everything and clear state
@@ -278,8 +279,20 @@ other branches are still picked up); `--close` closes every series of
 the branch as submitted.
 
 If a post fails, rbt-sync stops there, saves what it has done and
-exits with status 1 (`[gg] stopped after a failed post; run gg
-rbt-sync again to retry.`); the next run re-posts what was left.
+exits with status 1:
+
+```
+[gg] stopped after a failed post; run gg rbt-sync again to retry (if a new series was cut short, use gg rbt-sync -i and delete the "---" before the rest of it).
+```
+
+What was done is also saved when the run is interrupted (Ctrl-C) or a
+ReviewBoard lookup fails. The next run posts what was left: reviews
+whose post did not happen are re-posted (one outside the given range
+waits for a run that includes it) and commits not created yet are
+created. Those commits now come after the last posted one, so if they
+belong to a new series that was cut short, the retry makes them another
+new series; to keep them in one series, run `gg rbt-sync -i` and delete
+the `---` line before them.
 
 ### Post, review, publish
 
