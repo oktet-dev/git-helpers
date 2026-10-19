@@ -67,17 +67,21 @@ class RbtMock:
 
     def queue_failure(
         self, output: str, returncode: int = 1, count: int = 1,
-        *, command: str | None = None,
+        *, command: str | None = None, stdout: str = "",
     ) -> None:
         """Pre-program the next ``count`` rbt invocations to fail.
 
-        Each failure prints ``output`` to stderr and exits ``returncode``.
-        Subsequent invocations proceed with the mock's normal behavior.
-        With ``command`` (e.g. "post"), only invocations of that rbt command
-        fail; others pass through while the failure waits at the head.
+        Each failure prints ``stdout`` to stdout and ``output`` to stderr
+        and exits ``returncode``. Subsequent invocations proceed with the
+        mock's normal behavior. With ``command`` (e.g. "post"), only
+        invocations of that rbt command fail; others pass through while the
+        failure waits at the head.
         """
         queue_file = self.script_dir / "failure_queue.jsonl"
-        item = {"output": output, "returncode": returncode, "command": command}
+        item = {
+            "output": output, "returncode": returncode, "command": command,
+            "stdout": stdout,
+        }
         with queue_file.open("a") as f:
             for _ in range(count):
                 f.write(json.dumps(item) + "\n")
@@ -178,8 +182,9 @@ with open(LOG, "a") as f:
     f.write(json.dumps(sys.argv[1:]) + "\\n")
 
 # Failure queue: each line is {"output": str, "returncode": int,
-# "command": str | None}. Pop the head if present (and, when it names a
-# command, if this is that command) and exit with the queued failure.
+# "command": str | None, "stdout": str}. Pop the head if present (and, when
+# it names a command, if this is that command) and exit with the queued
+# failure.
 _QFILE = os.path.join(_dir, "failure_queue.jsonl")
 if os.path.exists(_QFILE):
     with open(_QFILE) as _qf:
@@ -189,6 +194,7 @@ if os.path.exists(_QFILE):
     if _head is not None and _head.get("command") in (None, _cmd):
         with open(_QFILE, "w") as _qf:
             _qf.write("\\n".join(_lines[1:]) + ("\\n" if len(_lines) > 1 else ""))
+        sys.stdout.write(_head.get("stdout", ""))
         sys.stderr.write(_head["output"])
         sys.exit(_head["returncode"])
 

@@ -1311,6 +1311,29 @@ class TestFailedPost:
         assert "Series 2: 2 patches, new" in out
         assert len(re.findall(r"\]\s+create", out)) == 2
 
+    def test_failed_create_that_posted_is_recorded(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("n1")
+        git_repo.commit("n2")
+        # rbt created the review, then failed (say on publishing it).
+        rbt_mock.queue_failure(
+            "ERROR: publish failed\n", stdout="Review request #1234 posted.\n",
+            command="post",
+        )
+
+        r = git_repo.run_gg("rbt-sync", "-U", "alice")
+        assert r.returncode == 1
+        assert "[gg] stopped after a failed post" in r.stderr
+        posts = [c for c in rbt_mock.calls() if c and c[0] == "post"]
+        assert len(posts) == 1
+        [n1] = review_store.load_reviews("feature", cwd=git_repo.work_dir)
+        assert (n1.review_id, n1.subject, n1.diff_hash) == ("1234", "n1", "post-failed")
+        out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
+        assert re.search(r"\[1/1\]\s+update\s+\S+\s+r/1234\s+n1", out)
+        assert re.search(r"\[1/1\]\s+create\s+\S+\s+--\s+n2", out)
+
     def test_exception_mid_run_keeps_what_was_done(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
     ) -> None:

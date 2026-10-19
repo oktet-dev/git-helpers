@@ -253,14 +253,18 @@ def _execute(
             )
             rid = result.review_id or old.review_id
 
+        subject = review_store.strip_prefix(action.new_commit.subject)
         if result.returncode != 0 or not rid:
+            if rid and old is None:
+                # rbt failed after creating the review: it exists on
+                # ReviewBoard, so keep it, due a re-post.
+                record[i] = _entry(branch_name, rid, subject, _POST_FAILED, row.series)
             # Stop here: posting on would chain later patches to the
             # wrong review.
             return True
 
         record[i] = _entry(
-            branch_name, rid, review_store.strip_prefix(action.new_commit.subject),
-            action.new_commit.diff_hash, row.series,
+            branch_name, rid, subject, action.new_commit.diff_hash, row.series,
         )
         prev_review_id = rid
 
