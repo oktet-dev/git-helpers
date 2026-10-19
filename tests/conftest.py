@@ -215,34 +215,35 @@ elif cmd == "publish":
 
 else:
     args = sys.argv[2:]
-    people = []
-    groups = []
-    summary = ""
-    depends_on = []
+    given = {}
     i = 0
     # Like rbtools: one comma-separated value; a repeated flag overwrites it.
     while i < len(args):
         if args[i] == "--target-people" and i + 1 < len(args):
-            people = args[i + 1].split(",")
+            given["people"] = args[i + 1].split(",")
             i += 2
         elif args[i] == "--target-groups" and i + 1 < len(args):
-            groups = args[i + 1].split(",")
+            given["groups"] = args[i + 1].split(",")
+            i += 2
+        elif args[i] == "-r" and i + 1 < len(args):
+            # Like rbt: an update answers with the review it updated.
+            rid = int(args[i + 1])
             i += 2
         elif args[i].startswith("--summary="):
-            summary = args[i].split("=", 1)[1]
+            given["summary"] = args[i].split("=", 1)[1]
             i += 1
         elif args[i].startswith("--depends-on="):
-            depends_on = [d for d in args[i].split("=", 1)[1].split(",") if d]
+            given["depends_on"] = [d for d in args[i].split("=", 1)[1].split(",") if d]
             i += 1
         else:
             i += 1
-    state = {
-        "people": people,
-        "groups": groups,
-        "summary": summary,
-        "depends_on": depends_on,
-    }
     state_file = os.path.join(STATE_DIR, str(rid) + ".json")
+    state = {"people": [], "groups": [], "summary": "", "depends_on": []}
+    # An update keeps the fields it does not set.
+    if "-r" in args and os.path.exists(state_file):
+        with open(state_file) as f:
+            state.update(json.load(f))
+    state.update(given)
     with open(state_file, "w") as f:
         json.dump(state, f)
 
@@ -257,8 +258,9 @@ else:
 def rbt_mock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> RbtMock:
     """Create a mock rbt script that logs calls and prints fake review IDs.
 
-    The mock is also put first on PATH for in-process calls, so a test can
-    never reach the real rbt.
+    A new review gets id 1000 + the number of earlier rbt calls; `post -r
+    ID` answers with ID. The mock is also put first on PATH for in-process
+    calls, so a test can never reach the real rbt.
     """
     mock_dir = tmp_path / "rbt_mock_bin"
     mock_dir.mkdir()

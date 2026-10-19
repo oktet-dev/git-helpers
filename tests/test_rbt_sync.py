@@ -1139,6 +1139,71 @@ class TestSeries:
         assert git_repo.run_gg("db", "--all").stdout == before
 
 
+class TestAcceptance:
+    """The spec's acceptance case, scaled down: series recorded under other
+    branches both below and above the branch's own series, plus new commits.
+    """
+
+    def _ids(self, git_repo: GitRepo, branch: str) -> list[str]:
+        return [e.review_id for e in review_store.load_reviews(branch, cwd=git_repo.work_dir)]
+
+    def test_stacked_branch_syncs_as_four_series(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        for name, prefix in (("scenario", "s"), ("dcb", "d")):
+            git_repo.git("checkout", "master")
+            git_repo.create_branch(name, "master")
+            for i in (1, 2, 3):
+                git_repo.commit(f"{name}: {prefix}{i}")
+            assert git_repo.run_gg("rbt-sync").returncode == 0
+        s_ids = self._ids(git_repo, "scenario")
+        d_ids = self._ids(git_repo, "dcb")
+        # mq's own series, posted on top of scenario's last review.
+        git_repo.git("checkout", "master")
+        git_repo.create_branch("mq", "master")
+        git_repo.commit("conf: c1")
+        git_repo.commit("conf: c2")
+        assert git_repo.run_gg("rbt-sync", "-D", s_ids[-1]).returncode == 0
+        c_ids = self._ids(git_repo, "mq")
+        # Stack: scenario below mq's series, dcb and new commits above it.
+        assert git_repo.git("rebase", "--onto", "scenario", "master", "mq").returncode == 0
+        assert git_repo.git("cherry-pick", "master..dcb").returncode == 0
+        for i in (1, 2, 3):
+            git_repo.commit(f"mq: n{i}")
+
+        out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
+        assert "Series 1: 3 patches, from 'scenario'\n" in out
+        assert f"Series 2: 2 patches (was series 1), depends on r/{s_ids[-1]}\n" in out
+        assert f"Series 3: 3 patches, from 'dcb', depends on r/{c_ids[-1]}\n" in out
+        assert f"Series 4: 3 patches, new, depends on r/{d_ids[-1]}\n" in out
+        assert re.search(rf"\[1/3\]\s+keep\+dep\s+\S+\s+r/{d_ids[0]}\s+dcb: d1", out)
+        assert len(re.findall(r"\]\s+keep\s", out)) == 7
+        assert len(re.findall(r"\]\s+create\s", out)) == 3
+
+        calls = rbt_mock.call_count()
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0, r.stderr
+        ids = self._ids(git_repo, "mq")
+        assert ids == s_ids + c_ids + d_ids + ids[8:]
+        assert [e.series for e in review_store.load_reviews("mq", cwd=git_repo.work_dir)] == [
+            1, 1, 1, 2, 2, 3, 3, 3, 4, 4, 4]
+        n_ids = ids[8:]
+        posts = [c for c in rbt_mock.calls()[calls:] if c and c[0] in ("post", "close", "publish")]
+        assert [(c[c.index("-r") + 1] if "-r" in c else None,
+                 next(a for a in c if a.startswith("--summary=")),
+                 next(a for a in c if a.startswith("--depends-on="))) for c in posts] == [
+            (d_ids[0], "--summary=[1/3]: dcb: d1", f"--depends-on={c_ids[-1]}"),
+            (None, "--summary=[1/3]: mq: n1", f"--depends-on={d_ids[-1]}"),
+            (None, "--summary=[2/3]: mq: n2", f"--depends-on={n_ids[0]}"),
+            (None, "--summary=[3/3]: mq: n3", f"--depends-on={n_ids[1]}"),
+        ]
+
+        calls = rbt_mock.call_count()
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0, r.stderr
+        assert not [c for c in rbt_mock.calls()[calls:] if c and c[0] in ("post", "close", "publish")]
+
+
 class TestFailedPost:
     def test_failed_create_stops_the_run(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
         git_repo.create_branch("feature", "master")
