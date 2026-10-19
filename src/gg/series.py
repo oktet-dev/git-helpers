@@ -4,7 +4,9 @@ The branch's record -- plus, for commits it does not record, other
 branches' records -- is matched against the branch's commits. A matched
 commit belongs to the series it was recorded in, series stay contiguous
 along the branch, and unrecorded commits join the series they sit in or
-form one new series at the top.
+form one new series at the top. Recorded reviews whose commits left the
+branch are forgotten, submitted or discarded, and kept reviews whose
+predecessor changed are re-chained (keep+dep).
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import cache
 
 from gg.matcher import ActionKind, NewCommit, SyncAction, reconcile
 from gg.review_store import ReviewEntry, strip_prefix
@@ -59,6 +62,9 @@ class _Source:
     key: _Key                        # series it joins while planning
     rank: int                        # 1-based place inside its old series
     origin: str | None = None        # foreign branch, for adopted entries
+    # Review recorded just before it: along the own record (across series),
+    # or inside its foreign series.
+    pred: str | None = None
 
 
 @dataclass
@@ -96,6 +102,10 @@ def build_plan(
     `commits` the full branch (oldest first) and `in_range` the revs the
     user's range selects. Returned actions carry copies of the recorded
     entries whose `position` is their rank inside their old series.
+
+    `landed_subjects` (upstream's recent subjects) is called at most once,
+    only when a recorded commit is gone; `depends_on_of` (a review's
+    dependencies on ReviewBoard) at most once per adopted series.
     """
     own = sorted(own, key=lambda e: e.position)
     own_sources = _own_sources(own)
@@ -114,12 +124,17 @@ def build_plan(
     _join_moved_runs(rows)
     rows = _place_unrecorded(rows, in_range)
     _hold_outside_range(rows, in_range)
+    series = _number(rows)
+    gone = _gone(branch, unmatched, foreign, landed_subjects, branch_exists)
+    submitted = {
+        a.old_entry.review_id
+        for group in gone for a in group.actions if a.kind == ActionKind.SUBMIT
+    }
+    _chain(series, rows, submitted, depends_on_of, initial_depends)
 
-    # `unmatched` holds own entries whose commits are gone; they are not
-    # classified here, so `gone` stays empty.
     return SeriesPlan(
-        series=_number(rows),
-        gone=[],
+        series=series,
+        gone=gone,
         warnings=warnings,
         adopted_from={r.source.origin for r in rows if r.source and r.source.origin},
     )
@@ -128,9 +143,11 @@ def build_plan(
 def _own_sources(own: list[ReviewEntry]) -> list[_Source]:
     ranks: Counter[int] = Counter()
     sources = []
+    pred: str | None = None
     for entry in own:
         ranks[entry.series] += 1
-        sources.append(_Source(entry, entry.series, ranks[entry.series]))
+        sources.append(_Source(entry, entry.series, ranks[entry.series], pred=pred))
+        pred = entry.review_id
     return sources
 
 
@@ -196,7 +213,8 @@ def _foreign_index(
             for i, entry in enumerate(entries):
                 target = _merge_target(entries, i, own_series)
                 key = (name, number) if target is None else target
-                source = _Source(entry, key, i + 1, origin=name)
+                pred = entries[i - 1].review_id if i else None
+                source = _Source(entry, key, i + 1, origin=name, pred=pred)
                 ids = index.setdefault(strip_prefix(entry.subject), {})
                 ids.setdefault(entry.review_id, []).append(source)
     return index
@@ -347,3 +365,90 @@ def _number(rows: list[_Row]) -> list[Series]:
             new=key is None,
         ))
     return series
+
+
+def _gone(
+    branch: str,
+    unmatched: list[_Source],
+    foreign: dict[str, list[ReviewEntry]],
+    landed_subjects: Callable[[], set[str]],
+    branch_exists: Callable[[str], bool],
+) -> list[GoneGroup]:
+    """Classify own entries whose commits left the branch, by old series.
+
+    A review that another existing branch records is forgotten (never
+    closed), else one whose subject landed upstream is submitted, else it
+    is discarded.
+    """
+    recorded_on: dict[str, dict[str, None]] = {}
+    for name in sorted(foreign):
+        if name != branch:
+            for entry in foreign[name]:
+                recorded_on.setdefault(entry.review_id, {})[name] = None
+    exists = cache(branch_exists)
+    landed: set[str] | None = None
+
+    groups: dict[int, list[SyncAction]] = {}
+    for source in sorted(unmatched, key=lambda s: s.entry.position):
+        entry = source.entry
+        holder = next((b for b in recorded_on.get(entry.review_id, {}) if exists(b)), None)
+        if holder is not None:
+            kind = ActionKind.FORGET
+        else:
+            if landed is None:
+                landed = {strip_prefix(s) for s in landed_subjects()}
+            landed_here = strip_prefix(entry.subject) in landed
+            kind = ActionKind.SUBMIT if landed_here else ActionKind.DISCARD
+        groups.setdefault(entry.series, []).append(SyncAction(
+            kind=kind,
+            old_entry=replace(entry, position=source.rank),
+            new_commit=None,
+            new_position=None,
+            forget_branch=holder,
+        ))
+    return [GoneGroup(number, groups[number]) for number in sorted(groups)]
+
+
+def _chain(
+    series: list[Series],
+    rows: list[_Row],
+    submitted: set[str],
+    depends_on_of: Callable[[str], list[str]],
+    initial_depends: str | None,
+) -> None:
+    """Set each series' dependency and re-chain kept reviews that need it.
+
+    A commit's expected predecessor is the review of the commit before it
+    along the branch, across series (none after a create). A kept review
+    whose current predecessor differs becomes keep+dep, unless that
+    predecessor is being submitted. The first patch of series 1 is never
+    re-chained.
+    """
+    sources = {id(row.action): row.source for row in rows}
+    expected: str | None = None
+    for s in series:
+        s.depends_on = initial_depends if s.number == 1 else expected
+        for i, action in enumerate(s.actions):
+            if action.kind == ActionKind.KEEP and (s.number, i) != (1, 0):
+                current = _current_pred(sources[id(action)], depends_on_of)
+                if current != expected and current not in submitted:
+                    action.kind = ActionKind.KEEP_DEP
+                    action.needs_dep_update = True
+            expected = action.old_entry.review_id if action.old_entry else None
+
+
+def _current_pred(
+    source: _Source, depends_on_of: Callable[[str], list[str]],
+) -> str | None:
+    """The review a recorded entry depends on now.
+
+    That is the one recorded before it, except for the first entry of an
+    adopted foreign series, whose record has none: ReviewBoard is asked.
+    The first entry of a foreign series merged into an own one has none
+    either and is not looked up (no ReviewBoard read beyond one per
+    adopted series), so it counts as depending on nothing.
+    """
+    if isinstance(source.key, tuple) and source.rank == 1:
+        deps = depends_on_of(source.entry.review_id)
+        return deps[0] if deps else None
+    return source.pred

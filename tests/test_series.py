@@ -111,3 +111,94 @@ def test_out_of_range_commit_kept_even_if_changed():
 def test_range_end_leaves_later_commits_out():
     plan = plan_of([], [commit("n1"), commit("n2")], in_range={"r-n1"})
     assert members(plan) == [(1, ["n1"])]
+
+
+def test_gone_entries_classified_and_grouped():
+    own = [entry("stack", 1, "1", "landed"), entry("stack", 2, "2", "shared"),
+           entry("stack", 3, "3", "dropped"), entry("stack", 4, "4", "k", series=2)]
+    foreign = {"other": [entry("other", 1, "2", "shared")]}
+    plan = plan_of(own, [commit("k")], foreign=foreign, landed={"landed"}, live={"other"})
+    [group] = plan.gone
+    assert group.old_number == 1
+    assert [(a.kind.value, a.old_entry.review_id) for a in group.actions] == [
+        ("submit", "1"), ("forget", "2"), ("discard", "3")]
+    assert group.actions[1].forget_branch == "other"
+    assert plan.series[0].number == 1 and plan.series[0].was == 2
+
+
+def test_forget_needs_existing_branch():
+    own = [entry("stack", 1, "2", "shared"), entry("stack", 2, "4", "k")]
+    foreign = {"gone-branch": [entry("gone-branch", 1, "2", "shared")]}
+    plan = plan_of(own, [commit("k")], foreign=foreign, live=())
+    assert plan.gone[0].actions[0].kind.value == "discard"
+
+
+def test_keep_dep_after_insert():
+    own = [entry("stack", 1, "1000", "a"), entry("stack", 2, "1001", "b")]
+    plan = plan_of(own, [commit("a"), commit("x"), commit("b")])
+    assert action(plan, "b").kind.value == "keep+dep"
+
+
+def test_adopted_series_rechained_only_if_rb_differs():
+    own = [entry("stack", 1, "1001", "c")]
+    foreign = {"dcb": [entry("dcb", 1, "2000", "d1"), entry("dcb", 2, "2001", "d2")]}
+    commits = [commit("c"), commit("d1"), commit("d2")]
+    stale = plan_of(own, commits, foreign=foreign, deps={"2000": ["999"]})
+    assert action(stale, "d1").kind.value == "keep+dep"
+    chained = plan_of(own, commits, foreign=foreign, deps={"2000": ["1001"]})
+    assert action(chained, "d1").kind.value == "keep"
+    assert chained.series[1].depends_on == "1001"
+
+
+def test_series_one_first_patch_never_rechained():
+    own = [entry("stack", 1, "999", "z"), entry("stack", 2, "1000", "a")]
+    plan = plan_of(own, [commit("a")])
+    assert action(plan, "a").kind.value == "keep"
+
+
+def test_submitted_predecessor_not_rechained():
+    own = [entry("stack", 1, "1", "a"), entry("stack", 2, "2", "b", series=2),
+           entry("stack", 3, "3", "c", series=2)]
+    plan = plan_of(own, [commit("a"), commit("c")], landed={"b"})
+    assert action(plan, "c").kind.value == "keep"
+
+
+def test_out_of_range_keep_dep_marked():
+    own = [entry("stack", 1, "1000", "a"), entry("stack", 2, "1001", "b", series=2)]
+    plan = plan_of(own, [commit("a"), commit("x"), commit("b")], in_range={"r-x"})
+    b = action(plan, "b")
+    assert b.kind.value == "keep+dep" and b.outside_range
+
+
+def test_forget_wins_over_landed():
+    own = [entry("stack", 1, "2", "[1/2]: shared"), entry("stack", 2, "3", "[2/2]: gone"),
+           entry("stack", 3, "4", "k")]
+    foreign = {"other": [entry("other", 1, "2", "shared")]}
+    plan = plan_of(own, [commit("k")], foreign=foreign, landed={"shared", "[3/3]: gone"},
+                   live={"other"})
+    assert [a.kind.value for a in plan.gone[0].actions] == ["forget", "submit"]
+
+
+def test_lookups_lazy_and_once():
+    calls = []
+
+    def run(own, commits, foreign=None):
+        calls.clear()
+        return build_plan(
+            branch="stack", own=own, foreign=foreign or {}, commits=commits,
+            in_range={c.rev for c in commits},
+            landed_subjects=lambda: calls.append("landed") or set(),
+            branch_exists=lambda b: False,
+            depends_on_of=lambda rid: calls.append(rid) or [],
+        )
+
+    run([entry("stack", 1, "1", "a")], [commit("a")])
+    assert calls == []
+    run([entry("stack", 1, "1", "a"), entry("stack", 2, "2", "b"),
+         entry("stack", 3, "3", "c")], [commit("a")])
+    assert calls == ["landed"]
+    foreign = {"dcb": [entry("dcb", 1, "2000", "d1"), entry("dcb", 2, "2001", "d2")]}
+    run([], [commit("d1"), commit("d2")], foreign)
+    assert calls == []  # first patch of series 1: its dependency is left alone
+    run([entry("stack", 1, "1", "a")], [commit("a"), commit("d1"), commit("d2")], foreign)
+    assert calls == ["2000"]
