@@ -51,21 +51,65 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
                         "series recorded under other branches are still picked up")
     p.add_argument("--close", action="store_true",
                    help="close all reviews as submitted and clear DB")
-    p.add_argument("-s", "--series", action="append", default=[], type=_series_numbers,
-                   metavar="N[,N...]",
-                   help="act only on these series (numbers as shown by -d); not with a range")
+    p.add_argument("-s", "--series", action="append", default=[], type=_series_spec,
+                   metavar="N[,N...]|N:P[-Q][,...]",
+                   help="act only on these series, or on patches P..Q of series N "
+                        "(numbers as shown by -d); repeatable; not with a range")
     p.add_argument("range", nargs="?", default=None, help="revision range (default: tracking..HEAD)")
     p.set_defaults(func=run)
 
 
-def _series_numbers(text: str) -> list[int]:
-    """Parse a -s value such as "3" or "3,4" into series numbers."""
-    numbers = []
-    for token in text.split(","):
-        if not token.strip().isdigit() or int(token) < 1:
-            raise argparse.ArgumentTypeError(f"invalid series number: {token!r}")
-        numbers.append(int(token))
-    return numbers
+# One -s selection: a series number and its patch ranges (None: all patches).
+SeriesSpec = tuple[int, list[tuple[int, int]] | None]
+
+
+def _positive(token: str, what: str) -> int:
+    if not token.strip().isdigit() or int(token) < 1:
+        raise argparse.ArgumentTypeError(f"invalid series {what}: {token!r}")
+    return int(token)
+
+
+def _series_spec(text: str) -> list[SeriesSpec]:
+    """Parse a -s value: "3", "3,4" (series) or "4:1-3,5" (patches of series 4)."""
+    if ":" not in text:
+        return [(_positive(token, "number"), None) for token in text.split(",")]
+    number, patches = text.split(":", 1)
+    ranges = []
+    for token in patches.split(","):
+        first, _, last = token.partition("-")
+        a = _positive(first, "patch")
+        b = _positive(last, "patch") if last else a
+        if b < a:
+            raise argparse.ArgumentTypeError(f"invalid series patch range: {token!r}")
+        ranges.append((a, b))
+    return [(_positive(number, "number"), ranges)]
+
+
+def _selected_revs(
+    plan: SeriesPlan, specs: list[SeriesSpec], *, branch_name: str,
+) -> set[str] | str:
+    """Commits picked by -s specs in a whole-branch plan, or an error message."""
+    revs: set[str] = set()
+    for number, ranges in specs:
+        if number > len(plan.series):
+            return f"no series {number} on '{branch_name}' (it has {len(plan.series)})."
+        series = plan.series[number - 1]
+        actions = series.actions
+        picked = range(1, len(actions) + 1) if ranges is None else [
+            k for a, b in ranges for k in range(a, b + 1)
+        ]
+        if max(picked) > len(actions):
+            return (
+                f"series {number} has {len(actions)} patches; "
+                f"no patch {max(picked)}."
+            )
+        if series.new and min(picked) != 1:
+            return (
+                f"series {number} is new: the selection must start at patch 1 "
+                "(patches left before it would later join the series below)."
+            )
+        revs.update(actions[k - 1].new_commit.rev for k in picked)
+    return revs
 
 
 def _number_matches(action: SyncAction, num_str: str, old_total: int) -> bool:
@@ -351,8 +395,8 @@ def run(args: argparse.Namespace) -> int:
         print(f"Closed {len(old)} review(s) as submitted.", file=sys.stderr)
         return 0
 
-    wanted = sorted({n for numbers in args.series for n in numbers})
-    if wanted and args.range:
+    specs = [spec for specs_of_one in args.series for spec in specs_of_one]
+    if specs and args.range:
         print("[gg] -s and a range cannot be combined.", file=sys.stderr)
         return 1
 
@@ -403,20 +447,11 @@ def run(args: argparse.Namespace) -> int:
             initial_depends=args.depends_on,
         )
 
-    if wanted:
-        whole = plan_for(set(full))
-        if wanted[-1] > len(whole.series):
-            print(
-                f"[gg] no series {wanted[-1]} on '{branch_name}' "
-                f"(it has {len(whole.series)}).",
-                file=sys.stderr,
-            )
+    if specs:
+        revs = _selected_revs(plan_for(set(full)), specs, branch_name=branch_name)
+        if isinstance(revs, str):
+            print(f"[gg] {revs}", file=sys.stderr)
             return 1
-        revs = {
-            a.new_commit.rev
-            for s in whole.series if s.number in wanted
-            for a in s.actions if a.new_commit
-        }
         selected = [rev for rev in full if rev in revs]
 
     plan = plan_for(set(selected))
@@ -432,7 +467,7 @@ def run(args: argparse.Namespace) -> int:
         try:
             edited = edit_plan(
                 plan, renumber=args.renumber,
-                separators=args.range is None and not wanted,
+                separators=args.range is None and not specs,
             )
         except ValueError as e:
             print(f"[gg] {e}", file=sys.stderr)

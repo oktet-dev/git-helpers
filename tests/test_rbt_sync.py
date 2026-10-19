@@ -1240,6 +1240,61 @@ class TestSeriesOption:
         assert r.returncode == 2
         assert "series" in r.stderr
 
+    def test_first_patches_of_new_series(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._posted_stack(git_repo)
+        git_repo.commit("n2")
+        git_repo.commit("n3")
+        calls = rbt_mock.call_count()
+        r = git_repo.run_gg("rbt-sync", "-s", "3:1-2")
+        assert r.returncode == 0, r.stderr
+        posts = [c for c in rbt_mock.calls()[calls:] if c and c[0] == "post"]
+        assert ["--summary=[1/2]: n1" in p for p in posts] == [True, False]
+        assert "--summary=[2/2]: n2" in posts[1]
+        out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
+        assert "Series 4: 1 patch, new" in out
+        assert re.search(r"\[1/1\]\s+create\s+\S+\s+--\s+n3", out)
+
+    def test_patch_list_and_ranges(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._posted_stack(git_repo)
+        for subject in ("n2", "n3", "n4"):
+            git_repo.commit(subject)
+        out = _plain(git_repo.run_gg("rbt-sync", "-d", "-s", "3:1-2,4").stdout)
+        rows = [line for line in out.splitlines() if "create" in line]
+        assert [row.split()[-1] for row in rows] == ["n1", "n2", "n4"]
+
+    def test_new_series_selection_must_start_at_one(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        self._posted_stack(git_repo)
+        git_repo.commit("n2")
+        calls = rbt_mock.call_count()
+        r = git_repo.run_gg("rbt-sync", "-s", "3:2")
+        assert r.returncode == 1
+        assert "start at patch 1" in r.stderr
+        assert rbt_mock.call_count() == calls
+
+    def test_patch_number_out_of_series(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._posted_stack(git_repo)
+        calls = rbt_mock.call_count()
+        r = git_repo.run_gg("rbt-sync", "-s", "2:3")
+        assert r.returncode == 1
+        assert "no patch 3" in r.stderr
+        assert rbt_mock.call_count() == calls
+
+    def test_patches_of_posted_series(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._posted_stack(git_repo)
+        out = _plain(git_repo.run_gg("rbt-sync", "-d", "-s", "2:2").stdout)
+        lines = [line.rstrip() for line in out.splitlines()]
+        assert any(line.endswith(" c2") for line in lines)
+        assert not any(line.endswith(" c1") for line in lines)
+
+    def test_bad_patch_spec(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._posted_stack(git_repo)
+        for value in ("3:x", "3:2-1", "3:", "3:0"):
+            r = git_repo.run_gg("rbt-sync", "-s", value)
+            assert r.returncode == 2, value
+            assert "series" in r.stderr
+
 
 class TestPartialLanding:
     def _post_and_land(self, git_repo: GitRepo, landed: int) -> list[str]:
