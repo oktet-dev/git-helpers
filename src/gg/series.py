@@ -421,20 +421,23 @@ def _chain(
     A commit's expected predecessor is the review of the commit before it
     along the branch, across series (none after a create). A kept review
     whose current predecessor differs becomes keep+dep, unless that
-    predecessor is being submitted. The first patch of series 1 is never
-    re-chained.
+    predecessor is being submitted and no new commit took its place. The
+    first patch of series 1 is never re-chained.
     """
     sources = {id(row.action): row.source for row in rows}
     expected: str | None = None
+    after_create = False
     for s in series:
         s.depends_on = initial_depends if s.number == 1 else expected
         for i, action in enumerate(s.actions):
             if action.kind == ActionKind.KEEP and (s.number, i) != (1, 0):
                 current = _current_pred(sources[id(action)], depends_on_of)
-                if current != expected and current not in submitted:
+                landed = current in submitted and not after_create
+                if current != expected and not landed:
                     action.kind = ActionKind.KEEP_DEP
                     action.needs_dep_update = True
             expected = action.old_entry.review_id if action.old_entry else None
+            after_create = action.kind == ActionKind.CREATE
 
 
 def _current_pred(

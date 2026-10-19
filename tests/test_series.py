@@ -163,6 +163,14 @@ def test_submitted_predecessor_not_rechained():
     assert action(plan, "c").kind.value == "keep"
 
 
+def test_insert_where_predecessor_landed_rechains():
+    own = [entry("stack", 1, "1", "a"), entry("stack", 2, "2", "b", series=2),
+           entry("stack", 3, "3", "c", series=2)]
+    plan = plan_of(own, [commit("a"), commit("x"), commit("c")], landed={"b"})
+    assert action(plan, "c").kind.value == "keep+dep"
+    assert [a.kind.value for g in plan.gone for a in g.actions] == ["submit"]
+
+
 def test_out_of_range_keep_dep_marked():
     own = [entry("stack", 1, "1000", "a"), entry("stack", 2, "1001", "b", series=2)]
     plan = plan_of(own, [commit("a"), commit("x"), commit("b")], in_range={"r-x"})
