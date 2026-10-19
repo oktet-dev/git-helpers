@@ -27,9 +27,23 @@ def summary(rev: str = "HEAD", *, cwd: Path | None = None) -> str:
     return _run("show", "--quiet", "--format=%s", rev, cwd=cwd)
 
 
+def _upstream(*args: str, cwd: Path | None = None) -> str:
+    """rev-parse the current branch's upstream; exit with a hint if unset."""
+    try:
+        return _run("rev-parse", *args, "@{u}", cwd=cwd)
+    except subprocess.CalledProcessError as e:
+        if "no upstream configured" not in e.stderr:
+            raise
+        raise SystemExit(
+            f"[gg] branch '{branchname(cwd=cwd)}' has no upstream; "
+            "gg uses it as the base of the review series.\n"
+            "[gg] Set one with: git branch --set-upstream-to=<remote>/<branch>"
+        ) from None
+
+
 def tracking_branch(*, cwd: Path | None = None) -> str:
     """Return the upstream tracking branch name."""
-    return branchname("@{u}", cwd=cwd)
+    return _upstream("--abbrev-ref", "--symbolic-full-name", cwd=cwd)
 
 
 def range_base(*, cwd: Path | None = None) -> str:
@@ -39,7 +53,7 @@ def range_base(*, cwd: Path | None = None) -> str:
     remote-tracking ref, return the remote-tracking ref so that
     the range excludes commits already on the remote.
     """
-    full = _run("rev-parse", "--symbolic-full-name", "@{u}", cwd=cwd)
+    full = _upstream("--symbolic-full-name", cwd=cwd)
     if full.startswith("refs/remotes/"):
         return _run("rev-parse", "--abbrev-ref", full, cwd=cwd)
     if full.startswith("refs/heads/"):
