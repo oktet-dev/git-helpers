@@ -72,6 +72,17 @@ def test_empty_string() -> None:
     assert clean_output("") == ""
 
 
+class TestPostOneReviewId:
+    def test_parses_id_after_success_icon(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """rbtools 7 prints '✓ Review request #N posted.'"""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: fix")
+        result = post_one("HEAD", "master", cwd=git_repo.work_dir)
+        assert result.review_id == "1000"
+
+
 class TestPostOneUpdateWithReviewId:
     """post_one called with review_id (the rbt-sync UPDATE path)."""
 

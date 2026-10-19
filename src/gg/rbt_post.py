@@ -11,7 +11,8 @@ from pathlib import Path
 from gg import bugs, git
 from gg.rbt_retry import run_with_retry
 
-_REVIEW_RE = re.compile(r"^Review request #(\d+) posted\.", re.MULTILINE)
+# Not anchored: rbtools >= 7 prefixes the line with a success icon.
+_REVIEW_RE = re.compile(r"Review request #(\d+) posted\.")
 # Matches a tqdm-style progress line: "<label><bar chars> [i/N]".
 # Bar chars include block glyphs and spaces.
 _PROGRESS_RE = re.compile(r"^(.*?)\s*[\u2580-\u259F ]*\s*\[\d+/\d+\]\s*$")

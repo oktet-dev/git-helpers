@@ -219,7 +219,8 @@ else:
     with open(state_file, "w") as f:
         json.dump(state, f)
 
-    print(f"Review request #{rid} posted.")
+    # rbtools >= 7 prefixes success messages with an icon.
+    print(f"\\u2713 Review request #{rid} posted.")
     print(f"https://reviews.example.com/r/{rid}/")
     print(f"https://reviews.example.com/r/{rid}/diff/")
 """
