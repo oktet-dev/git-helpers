@@ -387,6 +387,22 @@ class TestReviewerInheritance:
         assert "--target-groups" in last_post
         assert "devteam" in last_post
 
+    def test_create_inherits_every_reviewer(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        r = git_repo.run_gg("rbt", "-U", "alice", "-U", "bob")
+        assert r.returncode == 0
+
+        git_repo.commit("new feature")
+        r = git_repo.run_gg("rbt-sync")
+        assert r.returncode == 0
+
+        post_calls = [c for c in rbt_mock.calls() if c and c[0] == "post"]
+        last_post = post_calls[-1]
+        assert last_post[last_post.index("--target-people") + 1] == "alice,bob"
+
 
 class TestSyncState:
     def test_reviews_db_updated_after_sync(

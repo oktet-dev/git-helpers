@@ -101,12 +101,11 @@ def post_one(
     if publish:
         cmd.append("-p")
 
+    # rbt takes one comma-separated value; a repeated flag overwrites it.
     if reviewers:
-        for user in reviewers:
-            cmd.extend(["--target-people", user])
+        cmd.extend(["--target-people", ",".join(reviewers)])
     if groups:
-        for group in groups:
-            cmd.extend(["--target-groups", group])
+        cmd.extend(["--target-groups", ",".join(groups)])
 
     if review_id:
         cmd.extend(["-r", review_id, "--guess-description", "yes"])

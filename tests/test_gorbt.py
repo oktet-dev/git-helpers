@@ -120,6 +120,19 @@ class TestGgRbt:
         assert "--target-groups" in call
         assert "backend" in call
 
+    def test_repeated_users_and_groups_joined(
+        self, git_repo: GitRepo, rbt_mock: RbtMock
+    ) -> None:
+        """rbt keeps only the last --target-people/--target-groups flag."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("BUG-1: review me")
+        git_repo.run_gg("rbt", "-U", "alice", "-U", "bob", "-G", "be", "-G", "fe")
+        call = rbt_mock.call(0)
+        assert call.count("--target-people") == 1
+        assert call[call.index("--target-people") + 1] == "alice,bob"
+        assert call.count("--target-groups") == 1
+        assert call[call.index("--target-groups") + 1] == "be,fe"
+
     def test_help_flag(self, git_repo: GitRepo) -> None:
         r = git_repo.run_gg("rbt", "-h")
         assert r.returncode == 0

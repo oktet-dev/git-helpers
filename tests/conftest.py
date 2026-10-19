@@ -202,12 +202,13 @@ else:
     groups = []
     summary = ""
     i = 0
+    # Like rbtools: one comma-separated value; a repeated flag overwrites it.
     while i < len(args):
         if args[i] == "--target-people" and i + 1 < len(args):
-            people.append(args[i + 1])
+            people = args[i + 1].split(",")
             i += 2
         elif args[i] == "--target-groups" and i + 1 < len(args):
-            groups.append(args[i + 1])
+            groups = args[i + 1].split(",")
             i += 2
         elif args[i].startswith("--summary="):
             summary = args[i].split("=", 1)[1]
