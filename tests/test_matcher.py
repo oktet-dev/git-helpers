@@ -145,3 +145,10 @@ class TestPositionTiebreak:
         non_discard = [a for a in actions if a.kind != ActionKind.DISCARD]
         assert non_discard[0].old_entry.review_id == "100"
         assert non_discard[1].old_entry.review_id == "101"
+
+
+def test_reconcile_without_dep_marking() -> None:
+    old = [ReviewEntry("b", 1, "1", "a", "ha"), ReviewEntry("b", 2, "2", "c", "hc")]
+    new = [NewCommit("r1", "a", "ha"), NewCommit("rx", "x", "hx"), NewCommit("r2", "c", "hc")]
+    assert [a.kind for a in reconcile(old, new)][2] is ActionKind.KEEP_DEP
+    assert [a.kind for a in reconcile(old, new, mark_deps=False)][2] is ActionKind.KEEP

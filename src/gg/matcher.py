@@ -19,6 +19,8 @@ class ActionKind(Enum):
     KEEP_DEP = "keep+dep"
     CREATE = "create"
     DISCARD = "discard"
+    SUBMIT = "submit"
+    FORGET = "forget"
     SKIP = "skip"
 
 
@@ -43,6 +45,10 @@ class SyncAction:
     # Position in new series (1-based), None for discard
     new_position: int | None
     needs_dep_update: bool = False
+    outside_range: bool = False
+    moved: bool = False
+    # Branch that still records a forgotten review
+    forget_branch: str | None = None
 
 
 def _subject_ratio(a: str, b: str) -> float:
@@ -57,7 +63,7 @@ def _position_proximity(old_pos: int, new_pos: int, total: int) -> float:
 
 
 def reconcile(
-    old: list[ReviewEntry], new: list[NewCommit],
+    old: list[ReviewEntry], new: list[NewCommit], *, mark_deps: bool = True,
 ) -> list[SyncAction]:
     """Match old reviews to new commits and produce a sync plan.
 
@@ -147,7 +153,8 @@ def reconcile(
             ))
 
     # Dependency chain: detect when predecessor changed
-    _mark_dep_updates(actions, old)
+    if mark_deps:
+        _mark_dep_updates(actions, old)
 
     return actions
 
