@@ -403,6 +403,20 @@ class TestReviewerInheritance:
         last_post = post_calls[-1]
         assert last_post[last_post.index("--target-people") + 1] == "alice,bob"
 
+    def test_failed_create_is_not_recorded(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """A post that yields no review id must not be saved as a review."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        rbt_mock.queue_failure("ERROR: boom\n")
+        git_repo.run_gg("rbt-sync")
+
+        r = git_repo.run_gg("rbt-sync", "-d")
+        assert r.returncode == 0
+        assert "create" in r.stdout
+        assert "keep" not in r.stdout
+
 
 class TestSyncState:
     def test_reviews_db_updated_after_sync(

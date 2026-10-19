@@ -1,5 +1,7 @@
 """Tests for gg.review_store -- sqlite review metadata storage."""
 
+import sqlite3
+
 from gg import review_store
 from gg.review_store import ReviewEntry, strip_prefix
 from tests.conftest import GitRepo, RbtMock
@@ -48,6 +50,34 @@ class TestReviewCRUD:
         loaded = review_store.load_reviews("feature", cwd=git_repo.work_dir)
         assert len(loaded) == 1
         assert loaded[0].review_id == "2000"
+
+    def test_save_skips_entries_without_review_id(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        entries = [
+            ReviewEntry("feature", 1, "1000", "fix crash", "aaa"),
+            ReviewEntry("feature", 2, "", "post failed", "bbb"),
+        ]
+        review_store.save_reviews(entries, cwd=git_repo.work_dir)
+        loaded = review_store.load_reviews("feature", cwd=git_repo.work_dir)
+        assert [e.review_id for e in loaded] == ["1000"]
+
+    def test_load_skips_rows_without_review_id(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """Rows with an empty id, left by older gg versions, are not reviews."""
+        review_store.load_reviews("feature", cwd=git_repo.work_dir)  # create DB
+        conn = sqlite3.connect(git_repo.work_dir / ".gg" / "reviews.db")
+        conn.executemany(
+            "INSERT INTO reviews (branch, position, review_id, subject, diff_hash) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [("feature", 1, "", "lost id", "aaa"),
+             ("feature", 2, "1001", "kept", "bbb")],
+        )
+        conn.commit()
+        conn.close()
+        loaded = review_store.load_reviews("feature", cwd=git_repo.work_dir)
+        assert [e.review_id for e in loaded] == ["1001"]
 
     def test_branches_isolated(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
         review_store.save_reviews(

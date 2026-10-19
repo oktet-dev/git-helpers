@@ -57,12 +57,15 @@ def _connect(*, cwd: Path | None = None) -> sqlite3.Connection:
 
 
 def load_reviews(branch: str, *, cwd: Path | None = None) -> list[ReviewEntry]:
-    """Load all reviews for a branch, ordered by position."""
+    """Load all reviews for a branch, ordered by position.
+
+    Rows without a review id (failed posts saved by older gg) are skipped.
+    """
     conn = _connect(cwd=cwd)
     try:
         rows = conn.execute(
             "SELECT branch, position, review_id, subject, diff_hash "
-            "FROM reviews WHERE branch = ? ORDER BY position",
+            "FROM reviews WHERE branch = ? AND review_id != '' ORDER BY position",
             (branch,),
         ).fetchall()
         return [ReviewEntry(*row) for row in rows]
@@ -71,7 +74,11 @@ def load_reviews(branch: str, *, cwd: Path | None = None) -> list[ReviewEntry]:
 
 
 def save_reviews(entries: list[ReviewEntry], *, cwd: Path | None = None) -> None:
-    """Replace all reviews for a branch with new entries."""
+    """Replace all reviews for a branch with new entries.
+
+    Entries without a review id (the post failed) are not saved.
+    """
+    entries = [e for e in entries if e.review_id]
     if not entries:
         return
     branch = entries[0].branch
