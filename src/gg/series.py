@@ -104,8 +104,11 @@ def build_plan(
     entries whose `position` is their rank inside their old series.
 
     `landed_subjects` (upstream's recent subjects) is called at most once,
-    only when a recorded commit is gone; `depends_on_of` (a review's
-    dependencies on ReviewBoard) at most once per adopted series.
+    only when a recorded commit is gone. `depends_on_of` (a review's
+    dependencies on ReviewBoard) is called at most once per kept review
+    whose record has nothing before it: the first of the own record or of
+    a foreign series, unless it is the first patch of series 1 or follows
+    a create.
     """
     own = sorted(own, key=lambda e: e.position)
     own_sources = _own_sources(own)
@@ -130,7 +133,7 @@ def build_plan(
         a.old_entry.review_id
         for group in gone for a in group.actions if a.kind == ActionKind.SUBMIT
     }
-    _chain(series, rows, submitted, depends_on_of, initial_depends)
+    _chain(series, rows, own_sources, submitted, depends_on_of, initial_depends)
 
     return SeriesPlan(
         series=series,
@@ -412,6 +415,7 @@ def _gone(
 def _chain(
     series: list[Series],
     rows: list[_Row],
+    own_sources: list[_Source],
     submitted: set[str],
     depends_on_of: Callable[[str], list[str]],
     initial_depends: str | None,
@@ -419,39 +423,52 @@ def _chain(
     """Set each series' dependency and re-chain kept reviews that need it.
 
     A commit's expected predecessor is the review of the commit before it
-    along the branch, across series (none after a create). A kept review
-    whose current predecessor differs becomes keep+dep, unless that
-    predecessor is being submitted and no new commit took its place. The
+    along the branch, across series. Right after a create it is the review
+    about to be posted, which no kept review depends on yet. A kept review
+    stays kept only if its current predecessor, stepping back over reviews
+    being submitted, is the expected one; else it becomes keep+dep. The
     first patch of series 1 is never re-chained.
     """
     sources = {id(row.action): row.source for row in rows}
-    expected: str | None = None
-    after_create = False
+    record_pred: dict[str, str | None] = {}
+    for source in own_sources:
+        # First occurrence: each step back moves up the record, so walks end.
+        record_pred.setdefault(source.entry.review_id, source.pred)
+
+    expected: str | None = None      # review of the previous live commit
+    new_below = False                # the previous live commit is a create
     for s in series:
         s.depends_on = initial_depends if s.number == 1 else expected
         for i, action in enumerate(s.actions):
-            if action.kind == ActionKind.KEEP and (s.number, i) != (1, 0):
-                current = _current_pred(sources[id(action)], depends_on_of)
-                landed = current in submitted and not after_create
-                if current != expected and not landed:
-                    action.kind = ActionKind.KEEP_DEP
-                    action.needs_dep_update = True
+            if action.kind == ActionKind.KEEP and (s.number, i) != (1, 0) and (
+                new_below
+                or _live_pred(sources[id(action)], record_pred, submitted,
+                              depends_on_of) != expected
+            ):
+                action.kind = ActionKind.KEEP_DEP
+                action.needs_dep_update = True
             expected = action.old_entry.review_id if action.old_entry else None
-            after_create = action.kind == ActionKind.CREATE
+            new_below = action.kind == ActionKind.CREATE
 
 
-def _current_pred(
-    source: _Source, depends_on_of: Callable[[str], list[str]],
+def _live_pred(
+    source: _Source,
+    record_pred: dict[str, str | None],
+    submitted: set[str],
+    depends_on_of: Callable[[str], list[str]],
 ) -> str | None:
-    """The review a recorded entry depends on now.
+    """The review a recorded entry depends on now, skipping submitted ones.
 
-    That is the one recorded before it, except for the first entry of an
-    adopted foreign series, whose record has none: ReviewBoard is asked.
-    The first entry of a foreign series merged into an own one has none
-    either and is not looked up (no ReviewBoard read beyond one per
-    adopted series), so it counts as depending on nothing.
+    Its current predecessor is the review recorded before it. When the
+    record has none before it (first of the own record, first of a foreign
+    series), ReviewBoard is asked. Reviews being submitted are stepped over
+    back along the own record; running off its start gives None.
     """
-    if isinstance(source.key, tuple) and source.rank == 1:
+    if source.pred is not None:
+        current = source.pred
+    else:
         deps = depends_on_of(source.entry.review_id)
-        return deps[0] if deps else None
-    return source.pred
+        current = deps[0] if deps else None
+    while current in submitted:
+        current = record_pred.get(current)
+    return current

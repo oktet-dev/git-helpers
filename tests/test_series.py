@@ -13,13 +13,19 @@ def commit(subject, h=None, rev=None):
     return NewCommit(rev=rev or f"r-{subject}", subject=subject, diff_hash=h or f"h-{subject}")
 
 
-def plan_of(own, commits, *, foreign=None, in_range=None, landed=(), live=(), deps=None, initial=None):
+def plan_of(own, commits, *, foreign=None, in_range=None, landed=(), live=(), deps=None, initial=None,
+            reads=None):
+    def depends_on_of(rid):
+        if reads is not None:
+            reads.append(rid)
+        return (deps or {}).get(rid, [])
+
     return build_plan(
         branch="stack", own=own, foreign=foreign or {}, commits=commits,
         in_range=in_range if in_range is not None else {c.rev for c in commits},
         landed_subjects=lambda: set(landed),
         branch_exists=lambda b: b in live,
-        depends_on_of=lambda rid: (deps or {}).get(rid, []),
+        depends_on_of=depends_on_of,
         initial_depends=initial,
     )
 
@@ -169,6 +175,65 @@ def test_insert_where_predecessor_landed_rechains():
     plan = plan_of(own, [commit("a"), commit("x"), commit("c")], landed={"b"})
     assert action(plan, "c").kind.value == "keep+dep"
     assert [a.kind.value for g in plan.gone for a in g.actions] == ["submit"]
+
+
+def test_reorder_rechained_even_when_old_predecessor_landed():
+    own = [entry("stack", 1, "1", "a"), entry("stack", 2, "2", "b"),
+           entry("stack", 3, "3", "c"), entry("stack", 4, "4", "d")]
+    # b landed, c now sits on d: c still depends on b, which is not d.
+    p3 = plan_of(own, [commit("a"), commit("d"), commit("c")], landed={"b"})
+    assert action(p3, "c").kind.value == "keep+dep"
+    # c landed, order a, d, b: d must go onto a and b onto d (no b->d->c->b cycle).
+    p9 = plan_of(own, [commit("a"), commit("d"), commit("b")], landed={"c"})
+    assert action(p9, "d").kind.value == "keep+dep"
+    assert action(p9, "b").kind.value == "keep+dep"
+
+
+def test_landed_series_below_not_rechained():
+    own = [entry("stack", 1, "1", "a"), entry("stack", 2, "2", "b", series=2),
+           entry("stack", 3, "3", "c", series=2), entry("stack", 4, "4", "d", series=3)]
+    plan = plan_of(own, [commit("a"), commit("d")], landed={"b", "c"})
+    assert action(plan, "d").kind.value == "keep"
+
+
+def test_insert_at_adopted_boundary_rechains_own_series():
+    own = [entry("stack", 1, "19992", "c1"), entry("stack", 2, "19993", "c2")]
+    foreign = {"base": [entry("base", 1, "19989", "s1"), entry("base", 2, "19990", "s2")]}
+    plan = plan_of(own, [commit(s) for s in ("s1", "s2", "x", "c1", "c2")], foreign=foreign)
+    assert members(plan) == [(1, ["s1", "s2", "x"]), (2, ["c1", "c2"])]
+    assert action(plan, "x").kind.value == "create"
+    assert action(plan, "c1").kind.value == "keep+dep"
+    assert plan.series[1].depends_on is None
+
+
+def test_first_own_entry_above_adopted_series_asks_rb():
+    own = [entry("stack", 1, "19992", "c1"), entry("stack", 2, "19993", "c2")]
+    foreign = {"base": [entry("base", 1, "19989", "s1"), entry("base", 2, "19990", "s2")]}
+    commits = [commit(s) for s in ("s1", "s2", "c1", "c2")]
+    reads = []
+    chained = plan_of(own, commits, foreign=foreign, deps={"19992": ["19990"]}, reads=reads)
+    assert action(chained, "c1").kind.value == "keep"
+    assert reads == ["19992"]
+    stale = plan_of(own, commits, foreign=foreign, deps={"19992": ["19980"]})
+    assert action(stale, "c1").kind.value == "keep+dep"
+
+
+def test_first_of_merged_foreign_series_asks_rb():
+    own = [entry("stack", 1, "500", "p"), entry("stack", 2, "1000", "a", series=2),
+           entry("stack", 3, "1001", "b", series=2)]
+    foreign = {"base": [entry("base", 1, "999", "x"), entry("base", 2, "1000", "a"),
+                        entry("base", 3, "1001", "b")]}
+    reads = []
+    plan = plan_of(own, [commit(s) for s in ("p", "x", "a", "b")], foreign=foreign,
+                   deps={"999": ["500"]}, reads=reads)
+    assert members(plan) == [(1, ["p"]), (2, ["x", "a", "b"])]
+    assert action(plan, "x").kind.value == "keep"
+    assert reads == ["999"]
+
+
+def test_series_one_depends_on_initial():
+    plan = plan_of([entry("stack", 1, "1000", "a")], [commit("a"), commit("n")], initial="900")
+    assert [s.depends_on for s in plan.series] == ["900", "1000"]
 
 
 def test_out_of_range_keep_dep_marked():
