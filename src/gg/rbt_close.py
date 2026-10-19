@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import shlex
+import sys
 from pathlib import Path
 
 from gg.rbt_retry import run_with_retry
+
+# rbt close's message for a review that already has the requested status.
+_ALREADY_CLOSED = "is already closed as"
 
 
 def _close(
@@ -23,10 +27,17 @@ def _close(
         return 0
 
     r = run_with_retry(cmd, cwd=cwd)
-    if verbose:
-        output = r.stdout + r.stderr
-        if output:
+    output = r.stdout + r.stderr
+    if r.returncode != 0 and _ALREADY_CLOSED in output:
+        # rbt refuses only when the review already has this status:
+        # the close the caller wants has happened.
+        if verbose:
             print(output, end="")
+        return 0
+    if r.returncode != 0:
+        sys.stderr.write(output if output.endswith("\n") else output + "\n")
+    elif verbose and output:
+        print(output, end="")
     return r.returncode
 
 
