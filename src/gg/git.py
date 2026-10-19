@@ -75,6 +75,23 @@ def rev_range(*, cwd: Path | None = None) -> str:
     return f"{range_base(cwd=cwd)}..HEAD"
 
 
+def branch_exists(name: str, *, cwd: Path | None = None) -> bool:
+    """Return True if a local branch with this name exists."""
+    try:
+        _run("show-ref", "--verify", "--quiet", f"refs/heads/{name}", cwd=cwd)
+    except subprocess.CalledProcessError:
+        return False
+    return True
+
+
+def upstream_subjects(
+    ref: str, limit: int = 500, *, cwd: Path | None = None
+) -> set[str]:
+    """Return subjects of the newest `limit` commits reachable from ref."""
+    output = _run("log", "-n", str(limit), "--format=%s", ref, cwd=cwd)
+    return set(output.splitlines())
+
+
 def diff_tree(rev: str, *, cwd: Path | None = None) -> str:
     """Raw diff for a single commit (no commit metadata)."""
     return _run("diff-tree", "--no-commit-id", "-p", rev, cwd=cwd)

@@ -55,3 +55,22 @@ class TestRangeBase:
         git_repo.create_branch("a", "master")
         git_repo.create_branch("b", "a")
         assert git.range_base(cwd=git_repo.work_dir) == "a"
+
+
+class TestBranchExists:
+    def test_existing_branch(self, git_repo: GitRepo) -> None:
+        assert git.branch_exists("master", cwd=git_repo.work_dir)
+
+    def test_missing_branch(self, git_repo: GitRepo) -> None:
+        assert not git.branch_exists("no-such-branch", cwd=git_repo.work_dir)
+
+
+class TestUpstreamSubjects:
+    def test_includes_recent_subjects(self, git_repo: GitRepo) -> None:
+        git_repo.commit("landed fix")
+        assert "landed fix" in git.upstream_subjects("master", cwd=git_repo.work_dir)
+
+    def test_respects_limit(self, git_repo: GitRepo) -> None:
+        git_repo.commit("older")
+        git_repo.commit("newest")
+        assert git.upstream_subjects("master", 1, cwd=git_repo.work_dir) == {"newest"}
