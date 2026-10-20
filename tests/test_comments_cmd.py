@@ -128,6 +128,8 @@ def test_help_lists_forms(capsys: pytest.CaptureFixture[str]) -> None:
     assert e.value.code == 0
     out = capsys.readouterr().out
     assert "gg comments -s" in out
+    for form in ("-s 3,4", "-s $", "-s 4:1-3,5", "2:2-$"):
+        assert form in out
     assert "review <id>" in out
     assert "gg comments reply --help" in out
 

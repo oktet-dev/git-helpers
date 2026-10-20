@@ -19,11 +19,18 @@ _WORKERS = 8
 
 _EPILOG = """\
 Which requests:
-  gg comments                  every posted request of the branch
-  gg comments -s 3             only series 3 (-s N:P-Q for patches; as in rbt-sync)
-  gg comments r/123 124        these requests (r/ is optional)
+  gg comments                  every review request of the current branch
+  gg comments -s 3             series 3, numbered as in `gg rbt-sync -d`
+  gg comments -s 3,4           several series
+  gg comments -s $             the last series ($ = last)
+  gg comments -s 4:1-3,5       patches 1-3 and 5 of series 4
+  gg comments -s 2:2-$         patch 2 to the last patch of series 2
+  gg comments r/19954 19917    given review requests (r/ optional)
+  gg comments --all            also done discussions and quiet requests
 
-Only discussions that wait for someone are shown; --all adds the done ones.
+-s and review request ids cannot be combined. Series that were never
+posted have no review requests and show nothing.
+Without --all only discussions that wait for someone are shown.
 
 States:
   needs you             the reviewer spoke last, or a new issue is open
