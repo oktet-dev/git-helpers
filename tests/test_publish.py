@@ -136,3 +136,22 @@ class TestPublishRetry:
         publish_calls = [c for c in rbt_mock.calls() if c and c[0] == "publish"]
         # 4 attempts: 1 initial + 3 retries
         assert len(publish_calls) == 4
+
+
+class TestNothingToPublish:
+    def test_review_without_draft_is_not_a_failure(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        _post_series(git_repo)
+        rbt_mock.queue_failure(
+            "✗ Error publishing review request (it may already be published): "
+            "Object does not exist (API Error 100: Does Not Exist)\n",
+            command="publish",
+        )
+
+        r = git_repo.run_gg("publish", "-v")
+        assert r.returncode == 0, r.stderr
+        assert "failed" not in r.stderr
+        assert "r/1000: no draft to publish" in r.stdout

@@ -910,6 +910,41 @@ class TestPublishUnchangedOnSync:
         new_calls = rbt_mock.calls()[initial_calls:]
         assert [c for c in new_calls if c and c[0] == "publish"] == []
 
+    _NO_DRAFT = (
+        "✗ Error publishing review request (it may already be published): "
+        "Object does not exist (API Error 100: Does Not Exist)\n"
+    )
+
+    def test_kept_review_without_draft_is_quiet(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        """A kept review that was published already has no draft to publish."""
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        _post_series(git_repo)
+        rbt_mock.queue_failure(self._NO_DRAFT, command="publish")
+
+        r = git_repo.run_gg("rbt-sync", "-p")
+        assert r.returncode == 0, r.stderr
+        assert "failed" not in r.stderr
+        assert "API Error 100" not in r.stdout + r.stderr
+
+    def test_other_publish_errors_are_shown(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        _post_series(git_repo)
+        rbt_mock.queue_failure(
+            "✗ Error getting review request 1000: "
+            "Object does not exist (API Error 100: Does Not Exist)\n",
+            command="publish",
+        )
+
+        r = git_repo.run_gg("rbt-sync", "-p")
+        assert "rbt publish r/1000 failed" in r.stderr
+        assert "Error getting review request 1000" in r.stderr
+
 
 class TestSyncRetry:
     def test_keep_publish_retries_after_207(
