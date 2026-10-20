@@ -1,8 +1,8 @@
 """Turn ReviewBoard reviews into discussions with states and code excerpts.
 
-A discussion is one reviewer comment (or a review's top text) with the
-public replies to it. Its state says who is expected to act next. Pure
-logic: no ReviewBoard access.
+A discussion is one reviewer comment (or a review's top text and footer)
+with the public replies to it. Its state says who is expected to act next.
+Pure logic: no ReviewBoard access.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class Message:
 
 @dataclass
 class Discussion:
-    """A comment (None: the review's top text) with its messages and state."""
+    """A comment (None: the review's top text and footer) with its messages and state."""
 
     key: str
     review: Review
@@ -69,11 +69,13 @@ def build_discussions(reviews: list[Review], *, user: str) -> list[Discussion]:
         replies = [r for r in review.replies if r.public]
 
         top = review.body_top.strip()
-        replied_tops = sorted((r for r in replies if r.body_top.strip()),
-                              key=lambda r: r.timestamp)
-        if (top and top != "Ship It!") or replied_tops:
-            messages = [Message(review.author, review.timestamp, review.body_top)] if top else []
-            messages += [Message(r.author, r.timestamp, r.body_top) for r in replied_tops]
+        messages = [Message(review.author, review.timestamp, text)
+                    for text in (review.body_top, review.body_bottom) if text.strip()]
+        answers = [Message(r.author, r.timestamp, text)
+                   for r in sorted(replies, key=lambda r: r.timestamp)
+                   for text in (r.body_top, r.body_bottom) if text.strip()]
+        if (top and top != "Ship It!") or review.body_bottom.strip() or answers:
+            messages += answers
             result.append(Discussion(f"review {review.id}", review, None, messages,
                                      _state(messages, user, "", False)))
 

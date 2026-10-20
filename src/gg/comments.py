@@ -40,7 +40,8 @@ States:
   done                  issue resolved or dropped, or a remark you answered
 
 Discussions are named by a key: #<id> (diff comment), #g<id> (general
-comment), #a<id> (file attachment comment), review <id> (a review's top text).
+comment), #a<id> (file attachment comment), review <id> (a review's top
+text and footer, as one discussion).
 
 To reply: gg comments reply --help
 """

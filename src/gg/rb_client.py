@@ -346,6 +346,7 @@ class RBToolsApi:
             body_top=data.get("body_top") or "",
             comments=comments,
             replies=[self._reply(rid, data["id"], r) for r in replies],
+            body_bottom=data.get("body_bottom") or "",
         )
 
     def _reply(self, rid: str, review_id: int, data: dict) -> Reply:

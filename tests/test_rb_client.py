@@ -375,6 +375,14 @@ def test_reviews_with_comments_replies_and_targets():
     assert paths.count(R + "diffs/1/files/234050/") == 1      # cached per file diff
 
 
+def test_review_footer_is_read():
+    routes = read_routes()
+    payload, mime = routes[("GET", R + "reviews/")]
+    payload["reviews"][0]["body_bottom"] = "Also rename the test."
+    api, _ = fake_api(routes)
+    assert api.reviews("19954")[0].body_bottom == "Also rename the test."
+
+
 def test_diff_rows_fetched_once_per_file_diff():
     api, rb = fake_api(read_routes())
     c = comment_from_json("diff", diff_comment_json(), path="net-drv-ts/dcb/dcb_ets.c")

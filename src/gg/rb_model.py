@@ -68,7 +68,11 @@ class Reply:
 
 @dataclass(frozen=True)
 class Review:
-    """A review with its comments and the replies to it."""
+    """A review with its comments and the replies to it.
+
+    `body_top` is the text above the comments, `body_bottom` the footer
+    below them; each is "" if the review has none.
+    """
 
     id: int
     author: str
@@ -78,6 +82,7 @@ class Review:
     body_top: str
     comments: list[Comment]
     replies: list[Reply]
+    body_bottom: str = ""
 
 
 @dataclass(frozen=True)

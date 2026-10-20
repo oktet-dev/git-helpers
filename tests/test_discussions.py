@@ -28,15 +28,17 @@ def rc(reply_to=37441, author="kostik", text="Because.", kind="diff", ts=T2) -> 
     return ReplyComment(kind=kind, reply_to=reply_to, author=author, timestamp=ts, text=text)
 
 
-def reply(comments=(), author="kostik", public=True, body_top="", ts=T2, id=900) -> Reply:
+def reply(comments=(), author="kostik", public=True, body_top="", ts=T2, id=900,
+          body_bottom="") -> Reply:
     return Reply(id=id, author=author, timestamp=ts, public=public, body_top=body_top,
-                 comments=list(comments))
+                 comments=list(comments), body_bottom=body_bottom)
 
 
 def review(comments=(), replies=(), id=36005, author="ark-slav", public=True,
-           ship_it=False, body_top="") -> Review:
+           ship_it=False, body_top="", body_bottom="") -> Review:
     return Review(id=id, author=author, timestamp=T1, public=public, ship_it=ship_it,
-                  body_top=body_top, comments=list(comments), replies=list(replies))
+                  body_top=body_top, comments=list(comments), replies=list(replies),
+                  body_bottom=body_bottom)
 
 
 def states(reviews):
@@ -100,6 +102,44 @@ def test_review_top_text():
     assert ds[0].messages[0].text == "Looks fine, see below"
     assert ds[0].state == NEEDS_YOU
     assert build_discussions([review(body_top="Ship It!")], user="kostik") == []
+
+
+def test_review_footer_alone_is_a_discussion():
+    ds = build_discussions([review(body_bottom="Also rename the test.")], user="kostik")
+    assert [(d.key, d.comment, d.state) for d in ds] == [("review 36005", None, NEEDS_YOU)]
+    assert ds[0].messages == [Message("ark-slav", T1, "Also rename the test.")]
+
+
+def test_ship_it_with_footer_shows_both():
+    r = review(ship_it=True, body_top="Ship It!", body_bottom="Squash 3 and 4 first.")
+    ds = build_discussions([r], user="kostik")
+    assert [m.text for m in ds[0].messages] == ["Ship It!", "Squash 3 and 4 first."]
+    assert ds[0].state == NEEDS_YOU
+
+
+def test_review_messages_top_footer_then_replies_in_time_order():
+    later = reply(author="ark-slav", body_top="Fine.", ts=T3, id=901)
+    earlier = reply(body_top="Done.", body_bottom="Renamed too.", ts=T2, id=900)
+    r = review(body_top="Please rework.", body_bottom="Also rename the test.",
+               replies=[later, earlier])
+    ds = build_discussions([r], user="kostik")
+    assert [(m.author, m.timestamp, m.text) for m in ds[0].messages] == [
+        ("ark-slav", T1, "Please rework."),
+        ("ark-slav", T1, "Also rename the test."),
+        ("kostik", T2, "Done."),
+        ("kostik", T2, "Renamed too."),
+        ("ark-slav", T3, "Fine."),
+    ]
+    assert ds[0].state == NEEDS_YOU
+
+
+def test_reply_to_footer_alone_makes_a_discussion():
+    r = review(body_top="Ship It!", replies=[reply(body_bottom="Thanks!")])
+    ds = build_discussions([r], user="kostik")
+    assert [m.text for m in ds[0].messages] == ["Ship It!", "Thanks!"]
+    assert ds[0].state == DONE
+    unpublished = review(body_top="Ship It!", replies=[reply(body_bottom="x", public=False)])
+    assert build_discussions([unpublished], user="kostik") == []
 
 
 def test_ship_its():
