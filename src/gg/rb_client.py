@@ -52,11 +52,13 @@ _DOES_NOT_EXIST = 100          # RB API error "Does Not Exist"
 _TOO_MANY_REQUESTS = 429
 _PAGE_SIZE = 200               # RB's largest max-results
 
-# Comment kind -> (the list's URL segment, a name for messages).
+# Comment kind -> (the list's URL segment, a name for messages, the key of
+# one comment in RB's answers).
 _COMMENT_LISTS = {
-    "diff": ("diff-comments", "diff comment"),
-    "general": ("general-comments", "general comment"),
-    "attachment": ("file-attachment-comments", "file attachment comment"),
+    "diff": ("diff-comments", "diff comment", "diff_comment"),
+    "general": ("general-comments", "general comment", "general_comment"),
+    "attachment": ("file-attachment-comments", "file attachment comment",
+                   "file_attachment_comment"),
 }
 
 _DIFF_LINK_RE = re.compile(r"/diffs/(\d+)/files/(\d+)/?$")
@@ -192,9 +194,14 @@ def call_with_retry(fn: Callable[[], T], *, what: str = "ReviewBoard call",
 # --- Client ----------------------------------------------------------------
 
 
-def _item(resource: Any) -> dict:
-    """The JSON object of an item resource, without the response envelope."""
-    token = resource._token
+def _item(resource: Any, key: str | None = None) -> dict:
+    """The JSON object of an item resource, without the response envelope.
+
+    RBTools finds the object's key only in a response with nothing else in
+    it; `key` names the object in one with more (an issue status change
+    also returns `last_activity_time`).
+    """
+    token = resource._token or key
     return resource.rsp[token] if token else resource.rsp
 
 
@@ -332,7 +339,7 @@ class RBToolsApi:
     def _review(self, rid: str, data: dict) -> Review:
         path = self._review_path(rid, data["id"])
         comments = []
-        for kind, (segment, name) in _COMMENT_LISTS.items():
+        for kind, (segment, name, _) in _COMMENT_LISTS.items():
             for c in self._list(path + segment + "/",
                                 f"reading {name}s of review {data['id']}"):
                 comments.append(self._comment(rid, kind, c))
@@ -352,7 +359,7 @@ class RBToolsApi:
     def _reply(self, rid: str, review_id: int, data: dict) -> Reply:
         path = self._reply_path(rid, review_id, data["id"])
         comments = []
-        for kind, (segment, name) in _COMMENT_LISTS.items():
+        for kind, (segment, name, _) in _COMMENT_LISTS.items():
             for c in self._list(path + segment + "/",
                                 f"reading {name}s of reply {data['id']}"):
                 comments.append(reply_comment_from_json(kind, c))
@@ -433,7 +440,7 @@ class RBToolsApi:
 
     def add_reply_comment(self, rid: str, review_id: int, reply_id: int,
                           comment: Comment, text: str) -> None:
-        segment, name = _COMMENT_LISTS[comment.kind]
+        segment, name, _ = _COMMENT_LISTS[comment.kind]
         self._change(f"{self._reply_path(rid, review_id, reply_id)}{segment}/", "create",
                      f"replying to {name} {comment.id}",
                      reply_to_id=comment.id, text=text, text_type="markdown")
@@ -453,8 +460,8 @@ class RBToolsApi:
 
     def set_issue_status(self, rid: str, review_id: int, comment: Comment,
                          status: str) -> str:
-        segment, name = _COMMENT_LISTS[comment.kind]
+        segment, name, key = _COMMENT_LISTS[comment.kind]
         updated = self._change(
             f"{self._review_path(rid, review_id)}{segment}/{comment.id}/", "update",
             f"setting the issue status of {name} {comment.id}", issue_status=status)
-        return _item(updated)["issue_status"]
+        return _item(updated, key)["issue_status"]

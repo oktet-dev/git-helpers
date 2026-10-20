@@ -263,6 +263,11 @@ def item(key: str, data: dict, mime: str = JSON) -> tuple[dict, str]:
     return {"stat": "ok", key: data}, mime
 
 
+def status_changed(key: str, data: dict) -> tuple[dict, str]:
+    """RB's answer to an issue status change: the comment, and one more key."""
+    return {"stat": "ok", key: data, "last_activity_time": TS2}, JSON
+
+
 def page(key: str, items: list, *, next: str | None = None,
          create: str | None = None) -> tuple[dict, str]:
     links = {"self": link("/" + key + "/")}
@@ -443,7 +448,7 @@ def write_routes() -> dict:
             **diff_comment_json(),
             "links": {**diff_comment_json()["links"], **can(comment, "update")}}),
         ("PUT", comment):
-            item("diff_comment", diff_comment_json(issue_status="verifying-resolved")),
+            status_changed("diff_comment", diff_comment_json(issue_status="resolved")),
     }
 
 
@@ -458,7 +463,7 @@ def test_reply_writes():
     api.add_reply_comment("19954", 36005, 901, general, "Thanks.")
     api.set_reply_top("19954", 36005, 901, "Thanks!")
     api.publish_reply("19954", 36005, 901)
-    assert api.set_issue_status("19954", 36005, diff, "resolved") == "verifying-resolved"
+    assert api.set_issue_status("19954", 36005, diff, "resolved") == "resolved"
     api.delete_reply("19954", 36005, 901)
 
     assert [r for r in rb.requests if r[0] != "GET"] == [
@@ -472,6 +477,19 @@ def test_reply_writes():
         ("PUT", REVIEW + "diff-comments/37441/", {"issue_status": "resolved"}),
         ("DELETE", DRAFT, {}),
     ]
+
+
+def test_issue_status_of_general_comment():
+    path = REVIEW + "general-comments/812/"
+    data = {**general_json(812, "Nice."), "issue_opened": True, "issue_status": "open"}
+    api, rb = fake_api({
+        ("GET", path): item("general_comment", {
+            **data, "links": {**data["links"], **can(path, "update")}}),
+        ("PUT", path): status_changed("general_comment", {**data, "issue_status": "dropped"}),
+    })
+    general = comment_from_json("general", data)
+    assert api.set_issue_status("19954", 36005, general, "dropped") == "dropped"
+    assert rb.requests[-1] == ("PUT", path, {"issue_status": "dropped"})
 
 
 def test_write_refused_without_link():
