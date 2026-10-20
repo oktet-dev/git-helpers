@@ -108,3 +108,12 @@ def list_revs(range_spec: str, *, cwd: Path | None = None) -> list[str]:
     if not output:
         return []
     return output.splitlines()
+
+
+def has_upstream(*, cwd: Path | None = None) -> bool:
+    """Return True if the current branch has an upstream configured."""
+    try:
+        _run("rev-parse", "--abbrev-ref", "@{u}", cwd=cwd)
+    except subprocess.CalledProcessError:
+        return False
+    return True
