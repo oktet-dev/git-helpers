@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from gg import git, review_store
+from gg.rb_links import Links, links_for
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
@@ -21,7 +22,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p.set_defaults(func=run)
 
 
-def _run_list(branch: str) -> int:
+def _run_list(branch: str, links: Links) -> int:
     reviews = review_store.load_reviews(branch)
     hashes = review_store.load_diff_hashes(branch)
 
@@ -36,7 +37,7 @@ def _run_list(branch: str) -> int:
         print(f"Reviews ({len(reviews)}):")
         for r in reviews:
             print(
-                f"  #{r.position}  s{r.series}  r/{r.review_id}  {r.subject}  "
+                f"  #{r.position}  s{r.series}  {links.show(r.review_id)}  {r.subject}  "
                 f"{r.diff_hash[:8]}"
             )
     else:
@@ -47,7 +48,7 @@ def _run_list(branch: str) -> int:
     return 0
 
 
-def _run_list_all() -> int:
+def _run_list_all(links: Links) -> int:
     branches = review_store.list_branches()
     if not branches:
         print("No cached state.")
@@ -55,7 +56,7 @@ def _run_list_all() -> int:
     for i, branch in enumerate(branches):
         if i > 0:
             print("---")
-        _run_list(branch)
+        _run_list(branch, links)
     return 0
 
 
@@ -73,7 +74,8 @@ def run(args: argparse.Namespace) -> int:
         print(f"Cleared state for branch {branch}.")
         return 0
 
+    links = links_for()
     if args.all:
-        return _run_list_all()
+        return _run_list_all(links)
 
-    return _run_list(branch)
+    return _run_list(branch, links)

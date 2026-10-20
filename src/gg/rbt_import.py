@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from gg import diff_cache, git, rb_api, review_store
+from gg.rb_links import Links, links_for
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
@@ -27,6 +28,7 @@ def _format_table(
     *,
     reviewers: list[str] | None = None,
     groups: list[str] | None = None,
+    links: Links = Links(),
 ) -> str:
     """Format review entries and skipped commits as a table."""
     lines: list[str] = []
@@ -39,7 +41,7 @@ def _format_table(
     header = f"{'#':<6} {'Review':<10} Subject"
     lines.extend([header, "-" * len(header)])
     for e in entries:
-        lines.append(f"{e.position:<6} r/{e.review_id:<7} {e.subject}")
+        lines.append(f"{e.position:<6} {links.show(e.review_id, 9)} {e.subject}")
     if skipped:
         lines.append("")
         lines.append("Skipped commits (no matching review):")
@@ -133,6 +135,7 @@ def run(args: argparse.Namespace) -> int:
     print(_format_table(
         entries, skipped,
         reviewers=result.reviewers, groups=result.groups,
+        links=links_for(cwd=cwd),
     ))
 
     if args.dry:

@@ -1,4 +1,7 @@
+import re
+
 from gg.matcher import ActionKind, NewCommit, SyncAction
+from gg.rb_links import Links
 from gg.review_store import ReviewEntry
 from gg.series import GoneGroup, Series, SeriesPlan
 from gg.sync_plan import format_series_plan, format_summary
@@ -46,3 +49,30 @@ def test_summary_counts():
     fg = SyncAction(ActionKind.FORGET, ReviewEntry("s", 2, "2", "y", "h"), None, None)
     plan = SeriesPlan([Series(1, [keep("3", "z")])], [GoneGroup(1, [sub, fg])], [], set())
     assert format_summary(plan) == "Synced: 1 kept, 1 submitted, 1 forgotten"
+
+
+def test_full_links_widen_the_review_column():
+    plan = SeriesPlan(
+        series=[
+            Series(1, [keep("1000", "a"), keep("1001", "b", pos=2)]),
+            Series(2, [SyncAction(ActionKind.CREATE, None, NewCommit("r9", "c", "h"), 3)],
+                   new=True, depends_on="1001"),
+        ],
+        gone=[], warnings=[], adopted_from=set())
+    links = Links("https://rb.example.com/", full=True)
+    lines = format_series_plan(plan, upstream="u", links=links).splitlines()
+    url = "https://rb.example.com/r/1000/"
+    header = next(line for line in lines if line.startswith("#"))
+    row = next(line for line in lines if url in line)
+    create = next(line for line in lines if "create" in line)
+    assert header.index("Subject") == row.rindex(" a") + 1 == create.rindex(" c") + 1
+    assert "Series 2: 1 patch, new, depends on https://rb.example.com/r/1001/" in lines
+
+
+def test_hyperlinks_keep_the_columns():
+    plan = SeriesPlan([Series(1, [keep("1000", "a")])], [], [], set())
+    links = Links("https://rb.example.com/", hyperlink=True)
+    out = format_series_plan(plan, upstream="u", links=links)
+    assert "\x1b]8;;https://rb.example.com/r/1000/\x1b\\r/1000\x1b]8;;\x1b\\" in out
+    plain = format_series_plan(plan, upstream="u")
+    assert re.sub(r"\x1b]8;;[^\x1b]*\x1b\\", "", out) == plain

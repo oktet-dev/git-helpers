@@ -12,6 +12,7 @@ from pathlib import Path
 from gg import diff_cache, git, rb_api, review_store
 from gg.matcher import ActionKind, NewCommit, SyncAction
 from gg.numbering import number_series
+from gg.rb_links import links_for
 from gg.rbt_close import close_discarded, close_submitted
 from gg.rbt_post import post_one
 from gg.rbt_publish import publish_one
@@ -38,6 +39,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p.add_argument("--renumber", action="store_true", help="full renumber instead of fractional")
     p.add_argument("-p", "--publish", action="store_true", help="publish new/updated requests")
     p.add_argument("-v", "--verbose", action="store_true", help="show rbt output")
+    p.add_argument("-l", "--links", action="store_true",
+                   help="show reviews as full URLs (on a terminal r/N is a link anyway)")
     p.add_argument(
         "-D", "--depends-on", default=None, metavar="ID",
         help="first patch depends on this review request ID",
@@ -393,6 +396,13 @@ def run(args: argparse.Namespace) -> int:
     cwd = Path.cwd()
     branch_name = git.branchname(cwd=cwd)
     tracking = git.tracking_branch(cwd=cwd)
+    links = links_for(full=args.links, cwd=cwd)
+    if args.links and not links.server:
+        print(
+            "[gg] --links: no ReviewBoard URL (REVIEWBOARD_URL in .reviewboardrc "
+            "or git config reviewboard.url); showing r/N.",
+            file=sys.stderr,
+        )
 
     if args.close:
         old = review_store.load_reviews(branch_name, cwd=cwd)
@@ -400,7 +410,7 @@ def run(args: argparse.Namespace) -> int:
             print("No reviews to close.")
             return 1
         for entry in old:
-            print(f"  close r/{entry.review_id}  {entry.subject}")
+            print(f"  close {links.show(entry.review_id)}  {entry.subject}")
         if args.dry:
             return 0
         for entry in old:
@@ -509,6 +519,7 @@ def run(args: argparse.Namespace) -> int:
         reviewers=args.users,
         groups=args.groups,
         force=args.force,
+        links=links,
     ))
 
     if args.dry:

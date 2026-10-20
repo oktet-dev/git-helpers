@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from gg import git, review_store
+from gg.rb_links import links_for
 from gg.rbt_publish import publish_one
 
 
@@ -32,8 +33,9 @@ def run(args: argparse.Namespace) -> int:
         print(f"No reviews recorded for branch {branch}.", file=sys.stderr)
         return 1
 
+    links = links_for(cwd=cwd)
     for e in entries:
-        print(f"  publish r/{e.review_id}  {e.subject}")
+        print(f"  publish {links.show(e.review_id)}  {e.subject}")
 
     if args.dry:
         for e in entries:

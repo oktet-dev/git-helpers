@@ -6,6 +6,7 @@ import shutil
 
 from gg.matcher import ActionKind, SyncAction
 from gg.numbering import number_series
+from gg.rb_links import Links
 from gg.series import GoneGroup, Series, SeriesPlan
 
 
@@ -43,7 +44,7 @@ def _patches(n: int) -> str:
     return f"{n} patch" if n == 1 else f"{n} patches"
 
 
-def _series_header(series: Series) -> str:
+def _series_header(series: Series, links: Links) -> str:
     text = f"Series {series.number}: {_patches(len(series.actions))}"
     if series.was is not None:
         text += f" (was series {series.was})"
@@ -52,7 +53,7 @@ def _series_header(series: Series) -> str:
     if series.new:
         text += ", new"
     if series.depends_on:
-        text += f", depends on r/{series.depends_on}"
+        text += f", depends on {links.show(series.depends_on)}"
     if series.actions and all(a.outside_range for a in series.actions):
         text += ", outside range"
     return text
@@ -78,15 +79,20 @@ def format_series_plan(
     reviewers: list[str] | None = None,
     groups: list[str] | None = None,
     force: bool = False,
+    links: Links = Links(),
 ) -> str:
     """Format a series plan: gone groups first, then each live series."""
     show_pub = any(
         _will_post(a) for s in plan.series for a in s.actions if _visible(a)
     )
+    actions = [a for s in plan.series for a in s.actions]
+    actions += [a for g in plan.gone for a in g.actions]
+    # The Review column widens to fit full URLs.
+    width = max([10] + [len(links.text(a.old_entry.review_id)) + 1 for a in actions if a.old_entry])
     if show_pub:
-        header = f"{'#':<10} {'Action':<12} {'Pub':<7} {'Review':<10} Subject"
+        header = f"{'#':<10} {'Action':<12} {'Pub':<7} {'Review':<{width}} Subject"
     else:
-        header = f"{'#':<10} {'Action':<12} {'Review':<10} Subject"
+        header = f"{'#':<10} {'Action':<12} {'Review':<{width}} Subject"
     lines = _format_reviewer_header(reviewers or [], groups or [])
     if force:
         lines.append("Force: yes")
@@ -94,12 +100,13 @@ def format_series_plan(
     lines.append(header)
     lines.append("-" * len(header))
 
-    def row(num_str: str, action: SyncAction, review: str, subject: str) -> str:
+    def row(num_str: str, action: SyncAction, review_id: str | None, subject: str) -> str:
         kind_label = action.kind.value
+        review = links.show(review_id, width) if review_id else f"{'--':<{width}}"
         if show_pub:
             pub = _pub_label(action, publish)
-            return f"{num_str:<10} {kind_label:<12} {pub:<7} {review:<10} {subject}"
-        return f"{num_str:<10} {kind_label:<12} {review:<10} {subject}"
+            return f"{num_str:<10} {kind_label:<12} {pub:<7} {review} {subject}"
+        return f"{num_str:<10} {kind_label:<12} {review} {subject}"
 
     first = True
 
@@ -114,21 +121,21 @@ def format_series_plan(
         section(_gone_header(group, upstream))
         for action in group.actions:
             if action.new_commit and action.old_entry is None:
-                review, subject = "--", action.new_commit.subject
+                review, subject = None, action.new_commit.subject
             else:
                 entry = action.old_entry
-                review = f"r/{entry.review_id}" if entry else "--"
+                review = entry.review_id if entry else None
                 subject = entry.subject if entry else ""
             if action.kind == ActionKind.FORGET and action.forget_branch:
                 subject += f"  (still on '{action.forget_branch}')"
             lines.append(row("--", action, review, subject))
 
     for series in plan.series:
-        section(_series_header(series))
+        section(_series_header(series, links))
         for action, num_str in number_series(series, renumber=renumber):
             if not _visible(action):
                 continue
-            review = f"r/{action.old_entry.review_id}" if action.old_entry else "--"
+            review = action.old_entry.review_id if action.old_entry else None
             subject = action.new_commit.subject if action.new_commit else ""
             if action.outside_range:
                 subject += "  (outside range)"

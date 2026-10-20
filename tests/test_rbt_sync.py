@@ -1627,3 +1627,29 @@ class TestFailedPost:
         assert r.returncode == 1
         out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
         assert re.search(r"\[2/2\]\s+update\s+\S+\s+r/\d+\s+add tests", out)
+
+
+class TestLinksOption:
+    def test_links_show_full_urls(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        (git_repo.work_dir / ".reviewboardrc").write_text(
+            'REVIEWBOARD_URL = "https://rb.example.com/"\n'
+        )
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        out = git_repo.run_gg("rbt-sync", "-d", "--links").stdout
+        assert re.search(r"keep\s+https://rb\.example\.com/r/1000/\s+fix crash", out)
+        assert re.search(r"keep\s+https://rb\.example\.com/r/\d+/\s+add tests", out)
+        assert "\x1b]8" not in out
+
+    def test_plain_ids_when_piped(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        (git_repo.work_dir / ".reviewboardrc").write_text(
+            'REVIEWBOARD_URL = "https://rb.example.com/"\n'
+        )
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        out = git_repo.run_gg("rbt-sync", "-d").stdout
+        assert re.search(r"keep\s+r/1000\s+fix crash", out)
+        assert "\x1b]8" not in out

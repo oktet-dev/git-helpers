@@ -66,9 +66,26 @@ operations support `-d`/`--dry` for dry-run.
 | `git gg rbt-sync -f` | Re-post every matched commit, ignoring the diff-hash cache |
 | `git gg rbt-sync --new` | Forget this branch's reviews and post the current commits fresh (series recorded under other branches are still picked up) |
 | `git gg rbt-sync --close` | Close all reviews as submitted and clear the DB |
+| `git gg rbt-sync -d -l` | Show reviews as full URLs (`--links`); see [Review links](#review-links) |
 | `git gg publish` | Publish drafts of every review request on the current branch |
 | `git gg rbt-import` | Import an existing ReviewBoard chain into `reviews.db` |
 | `git gg db` | Inspect and manage `.gg/reviews.db` (list/clear/reinit) |
+
+#### Review links
+
+On a terminal, every `r/N` that `gg` prints (`rbt-sync`, `db`, `publish`,
+`rbt-import`) is a hyperlink (OSC 8) to the review: Ctrl+click opens it.
+The server comes from `REVIEWBOARD_URL` in `.reviewboardrc`, found the way
+`rbt` finds it, or from `git config reviewboard.url`. Piped output stays
+plain `r/N`. Inside tmux, let the links through to the terminal with this
+line in `~/.tmux.conf`:
+
+```
+set -as terminal-features ",xterm*:hyperlinks"
+```
+
+Where hyperlinks don't work, `gg rbt-sync -l` (`--links`) prints the full
+URL instead of `r/N`; terminals make a plain URL clickable on their own.
 
 Shortcut aliases:
 
