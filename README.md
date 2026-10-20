@@ -110,13 +110,20 @@ agent runs gg, gg never runs an agent.
 | `git gg comments reply [FILE]` | Post the replies and issue statuses given in FILE, or on stdin |
 | `git gg comments reply -d` | Check the input against ReviewBoard and show what would be posted; post nothing |
 
-A discussion is a reviewer's comment, or a review's top text, with its
-replies. Its state says who acts next: **needs you** (the reviewer spoke
-last, or a new issue is open), **waiting on reviewer** (you answered an
-open issue, or a fix waits for the reviewer's verification) or **done**
-(the issue is resolved or dropped, or you answered a remark). Discussions
-are named by keys: `#37441` (diff comment), `#g812` (general comment),
-`#a95` (file attachment comment), `review 36005` (a review's top text).
+A discussion is a reviewer's comment, or a review's top text and footer,
+with its replies. Its state says who acts next: **needs you** (the
+reviewer spoke last, or a new issue is open), **waiting on reviewer** (you
+answered an open issue, or an issue in a verifying state: a fix or drop
+the reviewer is to confirm) or **done** (the issue is resolved or
+dropped, or you answered a remark). Discussions are named by keys:
+`#37441` (diff comment), `#g812` (general comment), `#a95` (file
+attachment comment), `review 36005` (a review's top text and footer; a
+reply to it answers the top text).
+
+The code shown for a diff comment is from the diff revision the comment
+was made on (what the reviewer saw), with `>` marking the commented
+lines; removed lines show their old-side numbers followed by `-`. The
+current code is in the local commit.
 
 The reply input is a list of blocks, each a header line and the reply
 text under it:
@@ -171,11 +178,15 @@ How an agent works through the comments with you (also in
    `gg rbt-sync` and published (a status-only block,
    `=== r/19917 #37502 fixed`).
 
-`gg comments` talks to ReviewBoard through the RBTools Python library,
-with the same `.reviewboardrc` and login as `rbt`; the rest of gg keeps
-shelling out to `rbt`. RBTools became a dependency of gg with these
-commands: after updating git-helpers, reinstall gg once with
-`./install.sh --gg`.
+`gg comments` talks to ReviewBoard through the RBTools Python library;
+the rest of gg keeps shelling out to `rbt`. It uses the server from the
+same `.reviewboardrc` as `rbt`, and logs in with its `API_TOKEN` or
+`USERNAME`/`PASSWORD`, else with the session cookie of `rbt login`.
+`rbt`'s proxy settings (`ENABLE_PROXY`, `PROXY_AUTHORIZATION`) and
+external cookies (`EXT_AUTH_COOKIES`) are not used. RBTools became a
+dependency of gg with these commands: after updating git-helpers,
+reinstall gg once with `./install.sh --gg` (until then `gg comments`
+says so; the other commands keep working).
 
 ### Pull requests (bash)
 

@@ -3,7 +3,7 @@ name = "git-helpers"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-    "rbtools>=7.0",
+    "rbtools>=7.0,<8",   # gg.rb_client uses RBTools internals
 ]
 
 [project.scripts]
