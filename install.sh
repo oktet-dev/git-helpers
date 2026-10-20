@@ -34,15 +34,28 @@ install_skill() {
     try ln -s "${GG_GIT_HELPERS}/skills/gg" "$dest"
 }
 
-if [ "$1" = "--gg" ]; then
-    install_gg_cli
-    exit 0
-fi
+usage() {
+    cat <<EOF
+Usage: ./install.sh [--gg | --skill | -h]
 
-if [ "$1" = "--skill" ]; then
-    install_skill
-    exit 0
-fi
+Run it from the git-helpers checkout.
+
+  (no option)  link ~/.bashrc.gitgo, install the gg CLI, and print the
+               snippets to add to ~/.bashrc and ~/.gitconfig
+  --gg         only (re)install the gg CLI (uv tool install -e)
+  --skill      only link skills/gg to ~/.claude/skills/gg: the Claude Code
+               skill that teaches agents about gg
+  -h, --help   show this help
+EOF
+}
+
+case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --gg) install_gg_cli; exit 0 ;;
+    --skill) install_skill; exit 0 ;;
+    "") ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+esac
 
 echo "Install .bashrc.gitgo"
 try rm -f ~/.bashrc.gitgo

@@ -17,6 +17,24 @@ def _install(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+class TestUsage:
+    def test_help_lists_the_options(self, tmp_path: Path) -> None:
+        for flag in ("-h", "--help"):
+            r = _install(tmp_path, flag)
+            assert r.returncode == 0, r.stderr
+            assert r.stdout.startswith("Usage: ./install.sh")
+            for option in ("--gg", "--skill", "--help"):
+                assert option in r.stdout
+        assert not (tmp_path / ".bashrc.gitgo").exists()
+
+    def test_unknown_option_installs_nothing(self, tmp_path: Path) -> None:
+        r = _install(tmp_path, "--skil")
+        assert r.returncode == 1
+        assert "Unknown option: --skil" in r.stderr
+        assert "Usage: ./install.sh" in r.stderr
+        assert not (tmp_path / ".bashrc.gitgo").exists()
+
+
 class TestSkillFlag:
     def test_links_the_skill(self, tmp_path: Path) -> None:
         r = _install(tmp_path, "--skill")
