@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 
 from gg.matcher import ActionKind, SyncAction
@@ -142,6 +143,42 @@ def format_series_plan(
             lines.append(row(num_str, action, review, subject))
 
     return "\n".join(lines)
+
+
+def _md_escape(text: str) -> str:
+    """Escape what Markdown would format in a subject.
+
+    Underscores inside words (tapi_tool) are left alone: they format nothing.
+    """
+    text = re.sub(r"([\\`*\[\]<>~])", r"\\\1", text)
+    return re.sub(r"(?<![A-Za-z0-9])_|_(?![A-Za-z0-9])", r"\\_", text)
+
+
+def _md_review(review_id: str, links: Links) -> str:
+    url = links.url(review_id)
+    return f"[r/{review_id}]({url})" if url else f"r/{review_id}"
+
+
+def format_markdown(plan: SeriesPlan, *, links: Links) -> str:
+    """The live series in range as Markdown lists of review links, to paste
+    into a chat or a mail."""
+    blocks = []
+    for series in plan.series:
+        actions = [a for a in series.actions if not a.outside_range]
+        if not actions:
+            continue
+        title = f"**Series {series.number}**: {_patches(len(series.actions))}"
+        if series.depends_on:
+            title += f", depends on {_md_review(series.depends_on, links)}"
+        items = []
+        for i, action in enumerate(actions, 1):
+            subject = _md_escape(action.new_commit.subject if action.new_commit else "")
+            if action.old_entry:
+                items.append(f"{i}. {_md_review(action.old_entry.review_id, links)} {subject}")
+            else:
+                items.append(f"{i}. {subject} (not posted)")
+        blocks.append(title + "\n\n" + "\n".join(items))
+    return "\n\n".join(blocks)
 
 
 def format_summary(plan: SeriesPlan) -> str:

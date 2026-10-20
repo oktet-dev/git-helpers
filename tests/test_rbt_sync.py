@@ -1653,3 +1653,31 @@ class TestLinksOption:
         out = git_repo.run_gg("rbt-sync", "-d").stdout
         assert re.search(r"keep\s+r/1000\s+fix crash", out)
         assert "\x1b]8" not in out
+
+
+class TestMarkdown:
+    def test_md_prints_the_series_and_posts_nothing(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        (git_repo.work_dir / ".reviewboardrc").write_text(
+            'REVIEWBOARD_URL = "https://rb.example.com/"\n'
+        )
+        TestSeries._stack(self, git_repo)
+        assert git_repo.run_gg("rbt-sync", "master..HEAD~1").returncode == 0
+        calls = rbt_mock.call_count()
+        r = git_repo.run_gg("rbt-sync", "--md")
+        assert r.returncode == 0, r.stderr
+        assert not [c for c in rbt_mock.calls()[calls:] if c and c[0] in ("post", "close")]
+        assert r.stdout.startswith("**Series 1**: 2 patches\n\n1. [r/")
+        assert "](https://rb.example.com/r/" in r.stdout
+        assert "**Series 3**: 1 patch, depends on [r/" in r.stdout
+        assert r.stdout.rstrip().endswith("1. n1 (not posted)")
+        assert "Action" not in r.stdout
+
+    def test_md_with_series_selection(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        TestSeries._stack(self, git_repo)
+        assert git_repo.run_gg("rbt-sync", "master..HEAD~1").returncode == 0
+        r = git_repo.run_gg("rbt-sync", "--md", "-s", "2")
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.startswith("**Series 2**: 2 patches")
+        assert "Series 1" not in r.stdout and "Series 3" not in r.stdout

@@ -18,7 +18,7 @@ from gg.rbt_post import post_one
 from gg.rbt_publish import publish_one
 from gg.series import SeriesPlan, build_plan
 from gg.sync_edit import edit_plan
-from gg.sync_plan import format_series_plan, format_summary
+from gg.sync_plan import format_markdown, format_series_plan, format_summary
 
 _BOLD = "\033[1m"
 _RESET = "\033[0m"
@@ -41,6 +41,9 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p.add_argument("-v", "--verbose", action="store_true", help="show rbt output")
     p.add_argument("-l", "--links", action="store_true",
                    help="show reviews as full URLs (on a terminal r/N is a link anyway)")
+    p.add_argument("--md", action="store_true",
+                   help="print the series as Markdown review links (for chat or mail) "
+                        "and stop; with -s or a range, only those")
     p.add_argument(
         "-D", "--depends-on", default=None, metavar="ID",
         help="first patch depends on this review request ID",
@@ -397,9 +400,9 @@ def run(args: argparse.Namespace) -> int:
     branch_name = git.branchname(cwd=cwd)
     tracking = git.tracking_branch(cwd=cwd)
     links = links_for(full=args.links, cwd=cwd)
-    if args.links and not links.server:
+    if (args.links or args.md) and not links.server:
         print(
-            "[gg] --links: no ReviewBoard URL (REVIEWBOARD_URL in .reviewboardrc "
+            "[gg] no ReviewBoard URL (REVIEWBOARD_URL in .reviewboardrc "
             "or git config reviewboard.url); showing r/N.",
             file=sys.stderr,
         )
@@ -481,6 +484,9 @@ def run(args: argparse.Namespace) -> int:
     plan = plan_for(set(selected))
     for warning in dict.fromkeys(plan.warnings):
         print(f"[gg] {warning}", file=sys.stderr)
+    if args.md:
+        print(format_markdown(plan, links=links))
+        return 0
     if not own and not plan.adopted_from and not args.new:
         print(
             "[gg] No existing reviews; posting as a fresh series.",

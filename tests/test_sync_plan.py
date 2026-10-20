@@ -4,7 +4,7 @@ from gg.matcher import ActionKind, NewCommit, SyncAction
 from gg.rb_links import Links
 from gg.review_store import ReviewEntry
 from gg.series import GoneGroup, Series, SeriesPlan
-from gg.sync_plan import format_series_plan, format_summary
+from gg.sync_plan import format_markdown, format_series_plan, format_summary
 
 
 def keep(rid, subject, pos=1, **kw):
@@ -76,3 +76,51 @@ def test_hyperlinks_keep_the_columns():
     assert "\x1b]8;;https://rb.example.com/r/1000/\x1b\\r/1000\x1b]8;;\x1b\\" in out
     plain = format_series_plan(plan, upstream="u")
     assert re.sub(r"\x1b]8;;[^\x1b]*\x1b\\", "", out) == plain
+
+
+def test_markdown_lists_series_with_links():
+    plan = SeriesPlan(
+        series=[
+            Series(1, [keep("1000", "a"), keep("1001", "b", pos=2)], origin="base"),
+            Series(2, [SyncAction(ActionKind.CREATE, None, NewCommit("r9", "c", "h"), 3)],
+                   new=True, depends_on="1001"),
+        ],
+        gone=[GoneGroup(1, [SyncAction(ActionKind.SUBMIT, ReviewEntry("s", 1, "9", "x", "h"),
+                                       None, None)])],
+        warnings=[], adopted_from={"base"})
+    out = format_markdown(plan, links=Links("https://rb.example.com/"))
+    assert out == (
+        "**Series 1**: 2 patches\n"
+        "\n"
+        "1. [r/1000](https://rb.example.com/r/1000/) a\n"
+        "2. [r/1001](https://rb.example.com/r/1001/) b\n"
+        "\n"
+        "**Series 2**: 1 patch, depends on [r/1001](https://rb.example.com/r/1001/)\n"
+        "\n"
+        "1. c (not posted)"
+    )
+
+
+def test_markdown_skips_what_is_outside_the_range():
+    outside = keep("1000", "a", outside_range=True)
+    dep = keep("1001", "b", pos=2, outside_range=True)
+    dep.kind, dep.needs_dep_update = ActionKind.KEEP_DEP, True
+    plan = SeriesPlan(
+        [Series(1, [outside]), Series(2, [dep, keep("1002", "c", pos=3)], depends_on="1000")],
+        [], [], set())
+    out = format_markdown(plan, links=Links("https://rb.example.com/"))
+    assert "Series 1" not in out
+    assert "r/1001" not in out
+    assert "1. [r/1002](https://rb.example.com/r/1002/) c" in out
+
+
+def test_markdown_without_server_shows_ids():
+    plan = SeriesPlan([Series(1, [keep("1000", "a")])], [], [], set())
+    assert format_markdown(plan, links=Links()).endswith("1. r/1000 a")
+
+
+def test_markdown_escapes_subjects():
+    plan = SeriesPlan([Series(1, [keep("1000", "fix *ptr in `f` [x] <y> _z_ of tapi_tool")])],
+                      [], [], set())
+    out = format_markdown(plan, links=Links())
+    assert out.endswith(r"r/1000 fix \*ptr in \`f\` \[x\] \<y\> \_z\_ of tapi_tool")

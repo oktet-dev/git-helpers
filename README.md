@@ -67,6 +67,7 @@ operations support `-d`/`--dry` for dry-run.
 | `git gg rbt-sync --new` | Forget this branch's reviews and post the current commits fresh (series recorded under other branches are still picked up) |
 | `git gg rbt-sync --close` | Close all reviews as submitted and clear the DB |
 | `git gg rbt-sync -d -l` | Show reviews as full URLs (`--links`); see [Review links](#review-links) |
+| `git gg rbt-sync --md -s $` | Print the series as Markdown lists of review links, to paste into a chat or a mail (`-s` or a range picks the series; nothing is posted). Pipe it to the clipboard: `... \| xclip -sel clip` or `\| wl-copy` |
 | `git gg publish` | Publish drafts of every review request on the current branch |
 | `git gg rbt-import` | Import an existing ReviewBoard chain into `reviews.db` |
 | `git gg db` | Inspect and manage `.gg/reviews.db` (list/clear/reinit) |
