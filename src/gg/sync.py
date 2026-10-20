@@ -3,20 +3,21 @@
 from __future__ import annotations
 
 import argparse
-import functools
 import sys
 from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from gg import diff_cache, git, rb_api, review_store
-from gg.matcher import ActionKind, NewCommit, SyncAction
+from gg.branch_plan import branch_planner
+from gg.matcher import ActionKind, SyncAction
 from gg.numbering import number_series
 from gg.rb_links import links_for
 from gg.rbt_close import close_discarded, close_submitted
 from gg.rbt_post import post_one
 from gg.rbt_publish import publish_one
-from gg.series import SeriesPlan, build_plan
+from gg.series import SeriesPlan
+from gg.series_select import selected_revs, series_spec
 from gg.sync_edit import edit_plan
 from gg.sync_plan import format_markdown, format_series_plan, format_summary
 
@@ -57,79 +58,13 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
                         "series recorded under other branches are still picked up")
     p.add_argument("--close", action="store_true",
                    help="close all reviews as submitted and clear DB")
-    p.add_argument("-s", "--series", action="append", default=[], type=_series_spec,
+    p.add_argument("-s", "--series", action="append", default=[], type=series_spec,
                    metavar="N[,N...]|N:P[-Q][,...]",
                    help="act only on these series, or on patches P..Q of series N "
                         "(numbers as shown by -d; $ is the last series or patch); "
                         "repeatable; not with a range")
     p.add_argument("range", nargs="?", default=None, help="revision range (default: tracking..HEAD)")
     p.set_defaults(func=run)
-
-
-# One -s selection: a series number and its patch ranges (None: all patches).
-SeriesSpec = tuple[int, list[tuple[int, int]] | None]
-
-
-# "$" in a -s value: the last series of the plan, or the last patch of a series.
-_LAST = 0
-
-
-def _positive(token: str, what: str) -> int:
-    if token.strip() == "$":
-        return _LAST
-    if not token.strip().isdigit() or int(token) < 1:
-        raise argparse.ArgumentTypeError(f"invalid series {what}: {token!r}")
-    return int(token)
-
-
-def _series_spec(text: str) -> list[SeriesSpec]:
-    """Parse a -s value: "3", "3,4" (series) or "4:1-3,5" (patches of series 4).
-
-    "$" stands for the last series ("$:1-3") or the last patch ("4:2-$").
-    """
-    if ":" not in text:
-        return [(_positive(token, "number"), None) for token in text.split(",")]
-    number, patches = text.split(":", 1)
-    ranges = []
-    for token in patches.split(","):
-        first, _, last = token.partition("-")
-        a = _positive(first, "patch")
-        b = _positive(last, "patch") if last else a
-        if (a == _LAST and b != _LAST) or (_LAST not in (a, b) and b < a):
-            raise argparse.ArgumentTypeError(f"invalid series patch range: {token!r}")
-        ranges.append((a, b))
-    return [(_positive(number, "number"), ranges)]
-
-
-def _selected_revs(
-    plan: SeriesPlan, specs: list[SeriesSpec], *, branch_name: str,
-) -> set[str] | str:
-    """Commits picked by -s specs in a whole-branch plan, or an error message."""
-    revs: set[str] = set()
-    for number, ranges in specs:
-        name = str(number)
-        if number == _LAST:
-            number = len(plan.series)
-            name = f"{number} ($)"
-        if number > len(plan.series):
-            return f"no series {number} on '{branch_name}' (it has {len(plan.series)})."
-        series = plan.series[number - 1]
-        actions = series.actions
-        last = len(actions)
-        spans = [(1, last)] if ranges is None else [
-            (last if a == _LAST else a, last if b == _LAST else b) for a, b in ranges
-        ]
-        top = max(max(span) for span in spans)
-        if top > last:
-            return f"series {name} has {last} patches; no patch {top}."
-        picked = [k for a, b in spans for k in range(a, b + 1)]
-        if series.new and min(picked) != 1:
-            return (
-                f"series {name} is new: the selection must start at patch 1 "
-                "(patches left before it would later join the series below)."
-            )
-        revs.update(actions[k - 1].new_commit.rev for k in picked)
-    return revs
 
 
 def _number_matches(action: SyncAction, num_str: str, old_total: int) -> bool:
@@ -141,16 +76,6 @@ def _number_matches(action: SyncAction, num_str: str, old_total: int) -> bool:
     assert action.old_entry is not None
     rank = action.old_rank if action.old_rank is not None else action.old_entry.position
     return f"[{rank}/{old_total}]" == num_str
-
-
-def _build_new_commits(revs: list[str], *, cwd: Path) -> list[NewCommit]:
-    """Build NewCommit list from revision hashes."""
-    commits = []
-    for rev in revs:
-        subject = git.summary(rev, cwd=cwd)
-        h = diff_cache.diff_hash(rev, cwd=cwd)
-        commits.append(NewCommit(rev=rev, subject=subject, diff_hash=h))
-    return commits
 
 
 def _all_actions(plan: SeriesPlan) -> list[SyncAction]:
@@ -429,8 +354,8 @@ def run(args: argparse.Namespace) -> int:
 
     # The whole branch decides series and what is gone; the range only
     # limits which commits are acted on.
-    base = git.range_base(cwd=cwd)
-    full = git.list_revs(f"{base}..HEAD", cwd=cwd)
+    planner = branch_planner(cwd=cwd, new=args.new, depends_on=args.depends_on)
+    base, full, plan_for = planner.base, planner.full, planner.plan_for
     if args.range:
         selected = git.list_revs(args.range, cwd=cwd)
         on_branch = set(full)
@@ -448,34 +373,8 @@ def run(args: argparse.Namespace) -> int:
         print("No commits in range.")
         return 1
 
-    own = [] if args.new else review_store.load_reviews(branch_name, cwd=cwd)
-    foreign = {
-        b: review_store.load_reviews(b, cwd=cwd)
-        for b in review_store.list_branches(cwd=cwd)
-        if b != branch_name
-    }
-    commits = _build_new_commits(full, cwd=cwd)
-    # -s plans the branch twice; cache the lookups so RB is read once.
-    landed = functools.cache(lambda: git.upstream_subjects(base, cwd=cwd))
-    depends_on_of = functools.cache(
-        lambda review_id: rb_api.fetch_depends_on(review_id, cwd=cwd),
-    )
-
-    def plan_for(in_range: set[str]) -> SeriesPlan:
-        return build_plan(
-            branch=branch_name,
-            own=own,
-            foreign=foreign,
-            commits=commits,
-            in_range=in_range,
-            landed_subjects=landed,
-            branch_exists=lambda name: git.branch_exists(name, cwd=cwd),
-            depends_on_of=depends_on_of,
-            initial_depends=args.depends_on,
-        )
-
     if specs:
-        revs = _selected_revs(plan_for(set(full)), specs, branch_name=branch_name)
+        revs = selected_revs(plan_for(set(full)), specs, branch_name=branch_name)
         if isinstance(revs, str):
             print(f"[gg] {revs}", file=sys.stderr)
             return 1
@@ -487,7 +386,8 @@ def run(args: argparse.Namespace) -> int:
     if args.md:
         print(format_markdown(plan, links=links))
         return 0
-    if not own and not plan.adopted_from and not args.new:
+    if (not args.new and not plan.adopted_from
+            and not review_store.load_reviews(branch_name, cwd=cwd)):
         print(
             "[gg] No existing reviews; posting as a fresh series.",
             file=sys.stderr,
