@@ -132,8 +132,3 @@ def test_help_lists_forms(capsys: pytest.CaptureFixture[str]) -> None:
         assert form in out
     assert "review <id>" in out
     assert "gg comments reply --help" in out
-
-
-def test_reply_routes_to_stub(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(["comments", "reply", "--help"]) == 1
-    assert "not implemented" in capsys.readouterr().out

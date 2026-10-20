@@ -13,6 +13,8 @@ from gg.comments_format import Place, RequestView, format_totals, format_view, s
 from gg.discussions import build_discussions, code_excerpt, ship_its
 from gg.rb_links import links_for
 from gg.rb_model import Comment, DiffRow, RBApi, RBError
+from gg.reply_input import ReplyInputError, parse_blocks
+from gg.reply_post import post_blocks
 from gg.series_select import selected_revs, series_spec
 
 _WORKERS = 8
@@ -41,6 +43,86 @@ Discussions are named by a key: #<id> (diff comment), #g<id> (general
 comment), #a<id> (file attachment comment), review <id> (a review's top text).
 
 To reply: gg comments reply --help
+"""
+
+_REPLY_EPILOG = """\
+Input: blocks. Each block is one header line and the reply text under it,
+running up to the next header line (or the end):
+
+  === r/<request> #<comment> [fixed|dropped|open]
+  === r/<request> review <review>
+
+  <request>        the review request id; the r/ is optional
+  #<comment>       the discussion key as `gg comments` prints it:
+                   #<id> diff comment, #g<id> general comment,
+                   #a<id> file attachment comment
+  review <review>  the top text of review <review> (takes no status word)
+
+Status words change the comment's issue status after the reply is
+published (only for a comment that has an issue):
+  fixed     resolved; RB may report verifying-resolved when the reviewer
+            asked to verify the fix (it then waits on the reviewer)
+  dropped   dropped
+  open      open again (reopen), from any status
+
+Text: Markdown, posted as is. Blank lines at its start and end are
+trimmed, inner ones kept. A block with a status word and no text only
+changes the status.
+
+Rules:
+  - Every line starting with "=== " is a header, so reply text cannot
+    contain such a line; a header that does not parse is an error.
+  - One block per comment or review top text: a second one is an error,
+    and so is a block with neither text nor a status word.
+  - Everything is checked before anything is posted: every request,
+    review and comment exists, each comment belongs to its request, a
+    status word is given only for a comment with an issue. On any error
+    nothing is posted.
+  - If you have an unpublished reply draft with content on any review the
+    input touches, nothing is posted and gg prints the draft: publish or
+    discard it on ReviewBoard first. An empty draft is simply used.
+  - gg posts one reply per review and publishes it, then sets that
+    review's issue statuses; reviews in order of their first block.
+  - -d (--dry) checks everything and prints what would be posted, one line
+    per block; it posts nothing.
+
+Output: one line per block, "r/<request> <target>  " and what was done:
+"replied", the status RB reports, or both, e.g. "r/19954 #37441  replied",
+"r/19917 #37502  replied, resolved", "r/19917 #37503  dropped".
+If posting fails midway, gg stops, deletes the reply it could not
+publish, prints the error and then, after the line
+"Not posted (send again as is):", the blocks that were not posted, in this
+format (a block whose reply went out but whose status change failed comes
+back as a status-only block). Exit status 0: everything was posted (with
+-d: everything checks out); 1 otherwise.
+
+Example:
+  gg comments reply <<'EOF'
+  === r/19954 #37441
+  Fewer than 3 traffic classes is legal, but then the 3-TC
+  configurations below are skipped; the warning says why.
+  === r/19917 #37502 fixed
+  Fixed in this diff: the error path now restores the old config.
+  === r/19920 #37510 dropped
+  Agreed with ark-slav: out of scope here, tracked in BUG-1234.
+  === r/19954 review 36005
+  Thanks!
+  EOF
+
+Quote the heredoc word ('EOF') so the shell leaves $, ` and \\ alone.
+
+Working through comments with an agent:
+  1. gg comments (or -s N, or ids); read the code around each discussion.
+  2. Report a short triage to the user: what to fix, where to reply, and
+     why.
+  3. Show the replies in the chat; post them with gg comments reply only
+     after the user approves them, exactly as approved.
+  4. Fixes go into the commit of the review request they belong to; a
+     separate commit only when the change spans later commits. The reply
+     says where the fix is.
+  5. Mark issues fixed only after the new diff is uploaded with
+     gg rbt-sync and published: a status-only block, e.g.
+     "=== r/19917 #37502 fixed" with no text.
 """
 
 
@@ -74,10 +156,43 @@ def connect(cwd: Path) -> RBApi:
     return rb_client.connect(cwd=cwd)
 
 
+def _reply_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="gg comments reply",
+        description="Post replies to ReviewBoard discussions and change their issue\n"
+                    "statuses. The blocks to post are read from FILE, or from stdin.",
+        epilog=_REPLY_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("file", nargs="?", metavar="FILE",
+                   help="read the blocks from FILE instead of stdin")
+    p.add_argument("-d", "--dry", action="store_true",
+                   help="check everything and show what would be posted; post nothing")
+    return p
+
+
 def run_reply(argv: list[str]) -> int:
-    """`gg comments reply` (not implemented yet)."""
-    print("not implemented")
-    return 1
+    """Execute `gg comments reply`."""
+    args = _reply_parser().parse_args(argv)
+    try:
+        text = Path(args.file).read_text() if args.file else sys.stdin.read()
+    except OSError as e:
+        print(f"[gg] {e}", file=sys.stderr)
+        return 1
+    try:
+        blocks = parse_blocks(text)
+    except ReplyInputError as e:
+        for message in str(e).splitlines():
+            print(f"[gg] {message}", file=sys.stderr)
+        print("[gg] nothing was posted.", file=sys.stderr)
+        return 1
+
+    cwd = Path.cwd()
+    try:
+        api = connect(cwd)
+    except RBError as e:
+        print(f"[gg] {e}", file=sys.stderr)
+        return 1
+    return post_blocks(api, blocks, dry_run=args.dry, links=links_for(cwd=cwd))
 
 
 def _posted(planner: BranchPlanner, specs: list) -> tuple[list[tuple[str, Place]], str | None]:

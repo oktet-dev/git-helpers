@@ -75,7 +75,7 @@ operations support `-d`/`--dry` for dry-run.
 #### Review links
 
 On a terminal, every `r/N` that `gg` prints (`rbt-sync`, `db`, `publish`,
-`rbt-import`) is a hyperlink (OSC 8) to the review: Ctrl+click opens it.
+`rbt-import`, `comments`) is a hyperlink (OSC 8) to the review: Ctrl+click opens it.
 The server comes from `REVIEWBOARD_URL` in `.reviewboardrc`, found the way
 `rbt` finds it, or from `git config reviewboard.url`. Piped output stays
 plain `r/N`. Inside tmux, let the links through to the terminal with this
@@ -92,6 +92,90 @@ Shortcut aliases:
 
 - `git rbt ...` -> `git gg rbt-sync ...` (the most common command)
 - `git gorbt ...` -> `git gg rbt ...` (legacy)
+
+#### Review comments
+
+`gg comments` fetches the reviewers' discussions on the branch's review
+requests, with the code each one points at; `gg comments reply` posts
+replies and issue status changes. They are made for working through
+comments together with an agent (e.g. Claude Code) in your session: the
+agent runs gg, gg never runs an agent.
+
+| Command | Description |
+|---------|-------------|
+| `git gg comments` | The discussions that wait for someone, on every review request of the current branch, with the commented code |
+| `git gg comments -s 3` | Only series 3, numbered as in `rbt-sync -d`; same `-s` forms as `rbt-sync` (`-s 3,4`, `-s $`, `-s 4:1-3,5`, `-s 2:2-$`) |
+| `git gg comments r/19954 19917` | Given review requests (`r/` optional), also ones gg has no record of; not combined with `-s` |
+| `git gg comments --all` | Also discussions that are done, and requests where nothing waits |
+| `git gg comments reply [FILE]` | Post the replies and issue statuses given in FILE, or on stdin |
+| `git gg comments reply -d` | Check the input against ReviewBoard and show what would be posted; post nothing |
+
+A discussion is a reviewer's comment, or a review's top text, with its
+replies. Its state says who acts next: **needs you** (the reviewer spoke
+last, or a new issue is open), **waiting on reviewer** (you answered an
+open issue, or a fix waits for the reviewer's verification) or **done**
+(the issue is resolved or dropped, or you answered a remark). Discussions
+are named by keys: `#37441` (diff comment), `#g812` (general comment),
+`#a95` (file attachment comment), `review 36005` (a review's top text).
+
+The reply input is a list of blocks, each a header line and the reply
+text under it:
+
+```shell
+gg comments reply <<'EOF'
+=== r/19954 #37441
+Fewer than 3 traffic classes is legal, but then the 3-TC
+configurations below are skipped; the warning says why.
+=== r/19917 #37502 fixed
+Fixed in this diff: the error path now restores the old config.
+=== r/19920 #37510 dropped
+Agreed with ark-slav: out of scope here, tracked in BUG-1234.
+=== r/19954 review 36005
+Thanks!
+EOF
+```
+
+- Header: `=== r/<request> #<comment> [fixed|dropped|open]` or
+  `=== r/<request> review <review>`; the `r/` is optional. The status word
+  changes the comment's issue status after the reply: `fixed` -> resolved
+  (RB may report `verifying-resolved` when the reviewer asked to verify
+  the fix), `dropped` -> dropped, `open` reopens. A review header takes no
+  status word, and a status word needs a comment with an issue.
+- Text: Markdown, posted as is, with blank lines around it trimmed. A
+  block with a status word and no text only changes the status.
+- Every line starting with `=== ` is a header, so reply text cannot
+  contain such a line. Two blocks for one comment, or a block with
+  neither text nor a status word, are errors.
+- Everything is checked before anything is posted; on any error nothing
+  is posted. If you have an unpublished reply draft with content on any
+  review the input touches, nothing is posted either, and gg prints the
+  draft: publish or discard it on ReviewBoard first.
+- gg posts one reply per review, publishes it, then sets that review's
+  issue statuses, and prints a line per block (`r/19917 #37502  replied,
+  resolved`). If posting fails midway, it stops, deletes the reply it
+  could not publish, and prints the blocks that were not posted after
+  `Not posted (send again as is):`, ready to be sent again unchanged.
+
+How an agent works through the comments with you (also in
+`gg comments reply --help`):
+
+1. `gg comments` (or `-s N`, or ids); read the code around each
+   discussion.
+2. Report a short triage: what to fix, where to reply, and why.
+3. Show the replies in the chat; post them with `gg comments reply` only
+   after you approve them, exactly as approved.
+4. Fixes go into the commit of the review request they belong to; a
+   separate commit only when the change spans later commits. The reply
+   says where the fix is.
+5. Mark issues fixed only after the new diff is uploaded with
+   `gg rbt-sync` and published (a status-only block,
+   `=== r/19917 #37502 fixed`).
+
+`gg comments` talks to ReviewBoard through the RBTools Python library,
+with the same `.reviewboardrc` and login as `rbt`; the rest of gg keeps
+shelling out to `rbt`. RBTools became a dependency of gg with these
+commands: after updating git-helpers, reinstall gg once with
+`./install.sh --gg`.
 
 ### Pull requests (bash)
 
