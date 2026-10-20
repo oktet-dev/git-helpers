@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -103,6 +104,78 @@ def test_verifying_result_is_reported(monkeypatch: pytest.MonkeyPatch, fake: Fak
     fake.status_result[37442] = "verifying-resolved"
     assert reply(monkeypatch, TWO) == 0
     assert "r/19954 #37442  replied, verifying-resolved\n" in capsys.readouterr().out
+
+
+def fourth(fake: FakeRB, *comments: Comment) -> None:
+    """r/19930, review 36300 by ark-slav, with the given comments."""
+    fake.add_request("19930", "fourth")
+    fake.add_review("19930", Review(36300, "ark-slav", T1, True, False, "",
+                                    list(comments), []))
+
+
+def verified(cid: int, *, author: str = "ark-slav", status: str = "open") -> Comment:
+    """An issue whose author asked to verify its fix or drop."""
+    return replace(comment(cid), author=author, issue_status=status,
+                   require_verification=True)
+
+
+def test_status_already_set_is_not_sent(monkeypatch: pytest.MonkeyPatch, fake: FakeRB,
+                                        capsys: pytest.CaptureFixture[str]) -> None:
+    """RB takes a "change" to the current status for an edit of the comment (101)."""
+    fourth(fake, replace(comment(37520), issue_status="resolved"),
+           verified(37521, status="verifying-dropped"))
+    text = "=== r/19930 #37520 fixed\nDone.\n=== r/19930 #37521 dropped\n"
+    assert reply(monkeypatch, text) == 0
+    assert fake.log == [
+        ("create_reply", "19930", 36300),
+        ("add_reply_comment", "19930", 36300, 1001, 37520, "Done."),
+        ("publish_reply", "19930", 36300, 1001),
+    ]
+    assert capsys.readouterr().out == (
+        "r/19930 #37520  replied, already resolved\n"
+        "r/19930 #37521  already verifying-dropped\n")
+
+
+def test_verification_sends_verifying_status(monkeypatch: pytest.MonkeyPatch, fake: FakeRB,
+                                             capsys: pytest.CaptureFixture[str]) -> None:
+    """RB 8 lets only the comment's author resolve or drop such an issue (101)."""
+    fourth(fake, verified(37520), verified(37521), verified(37522, status="resolved"))
+    text = ("=== r/19930 #37520 fixed\n=== r/19930 #37521 dropped\n"
+            "=== r/19930 #37522 open\n")
+    assert reply(monkeypatch, text) == 0
+    assert fake.log == [
+        ("set_issue_status", "19930", 36300, 37520, "verifying-resolved"),
+        ("set_issue_status", "19930", 36300, 37521, "verifying-dropped"),
+        ("set_issue_status", "19930", 36300, 37522, "open"),
+    ]
+    assert capsys.readouterr().out == (
+        "r/19930 #37520  verifying-resolved\n"
+        "r/19930 #37521  verifying-dropped\n"
+        "r/19930 #37522  open\n")
+
+
+def test_own_issue_needs_no_verification(monkeypatch: pytest.MonkeyPatch,
+                                         fake: FakeRB) -> None:
+    fourth(fake, verified(37520, author="kostik"))
+    assert reply(monkeypatch, "=== r/19930 #37520 fixed\n") == 0
+    assert fake.log == [("set_issue_status", "19930", 36300, 37520, "resolved")]
+
+
+def test_user_read_only_for_verification(monkeypatch: pytest.MonkeyPatch,
+                                         fake: FakeRB) -> None:
+    fake.fail["user"] = (1, RBError("session read"))
+    assert reply(monkeypatch, TWO) == 0
+
+
+def test_dry_run_shows_status_to_set(monkeypatch: pytest.MonkeyPatch, fake: FakeRB,
+                                     capsys: pytest.CaptureFixture[str]) -> None:
+    fourth(fake, verified(37520), replace(comment(37521), issue_status="dropped"))
+    text = "=== r/19930 #37520 fixed\nDone.\n=== r/19930 #37521 dropped\n"
+    assert reply(monkeypatch, text, "-d") == 0
+    assert capsys.readouterr().out.startswith(
+        "r/19930 #37520  reply, set fixed (verifying-resolved)\n"
+        "r/19930 #37521  already dropped\n")
+    assert fake.log == []
 
 
 def test_review_top_reply(monkeypatch: pytest.MonkeyPatch, fake: FakeRB,
@@ -245,13 +318,13 @@ def test_empty_draft_is_used(monkeypatch: pytest.MonkeyPatch, fake: FakeRB,
 
 def test_dry_run_posts_nothing(monkeypatch: pytest.MonkeyPatch, fake: FakeRB,
                                capsys: pytest.CaptureFixture[str]) -> None:
-    text = TWO + "=== r/19917 #37502 open\n=== r/19954 review 36005\nThanks!\n"
+    text = TWO + "=== r/19917 #37502 dropped\n=== r/19954 review 36005\nThanks!\n"
     assert reply(monkeypatch, text, "-d") == 0
     out = capsys.readouterr().out
     assert out.startswith(
         "r/19954 #37441  reply\n"
         "r/19954 #37442  reply, set fixed\n"
-        "r/19917 #37502  set open\n"
+        "r/19917 #37502  set dropped\n"
         "r/19954 review 36005  reply\n")
     assert "nothing was posted" in out
     assert fake.log == []

@@ -155,10 +155,13 @@ EOF
 
 - Header: `=== r/<request> #<comment> [fixed|dropped|open]` or
   `=== r/<request> review <review>`; the `r/` is optional. The status word
-  changes the comment's issue status after the reply: `fixed` -> resolved
-  (RB may report `verifying-resolved` when the reviewer asked to verify
-  the fix), `dropped` -> dropped, `open` reopens. A review header takes no
-  status word, and a status word needs a comment with an issue.
+  changes the comment's issue status after the reply: `fixed` -> resolved,
+  `dropped` -> dropped, `open` reopens. When the reviewer asked to verify
+  the fix, `fixed`/`dropped` set `verifying-resolved`/`verifying-dropped`
+  (as RB's own UI does; RB 8 lets only the reviewer set the final status),
+  unless the comment is yours. A status the comment already has is not
+  set again. A review header takes no status word, and a status word
+  needs a comment with an issue.
 - Text: Markdown, posted as is, with blank lines around it trimmed. A
   block with a status word and no text only changes the status.
 - Every line starting with `=== ` is a header, so reply text cannot

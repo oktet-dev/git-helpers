@@ -36,6 +36,7 @@ class Comment:
     first_row: int | None = None
     num_rows: int | None = None
     attachment: str | None = None
+    require_verification: bool = False      # the reviewer confirms a fix or drop
 
 
 @dataclass(frozen=True)

@@ -71,10 +71,12 @@ running up to the next header line (or the end):
 
 Status words change the comment's issue status after the reply is
 published (only for a comment that has an issue):
-  fixed     resolved; RB may report verifying-resolved when the reviewer
-            asked to verify the fix (it then waits on the reviewer)
-  dropped   dropped
+  fixed     resolved; verifying-resolved when the reviewer asked to
+            verify the fix (it then waits on the reviewer; as in RB's
+            own UI, and unless the comment is yours)
+  dropped   dropped; likewise verifying-dropped
   open      open again (reopen), from any status
+A status the comment already has is not set again ("already resolved").
 
 Text: Markdown, posted as is. Blank lines at its start and end are
 trimmed, inner ones kept. A block with a status word and no text only
@@ -98,8 +100,9 @@ Rules:
     per block; it posts nothing.
 
 Output: one line per block, "r/<request> <target>  " and what was done:
-"replied", the status RB reports, or both, e.g. "r/19954 #37441  replied",
-"r/19917 #37502  replied, resolved", "r/19917 #37503  dropped".
+"replied", the status RB reports ("already <status>" when it was there),
+or both, e.g. "r/19954 #37441  replied", "r/19917 #37502  replied,
+resolved", "r/19917 #37503  dropped".
 If posting fails midway, gg stops, deletes the reply it could not
 publish, prints the error and then, after the line
 "Not posted (send again as is):", the blocks that were not posted, in this

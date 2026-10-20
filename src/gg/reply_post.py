@@ -6,6 +6,12 @@ user's with content. Then each review gets one reply, published, followed
 by the issue status changes of its blocks. If a write fails, gg stops,
 deletes the reply it could not publish and prints the blocks that were not
 posted, in the input format, so they can be sent again as they are.
+
+A status word becomes the status RB's own UI would set: a fix or drop of
+an issue whose author asked to verify it waits for them (verifying-...),
+which is all RB 8 lets anyone else set. A status the comment already has
+is not sent: RB takes such a "change" for an edit of the reviewer's
+comment and refuses it.
 """
 
 from __future__ import annotations
@@ -29,11 +35,18 @@ K = TypeVar("K")
 
 @dataclass(frozen=True)
 class _Target:
-    """A checked block: its review and the comment it answers (None: the top text)."""
+    """A checked block: its review, the comment it answers (None: the top
+    text) and the issue status its status word asks for."""
 
     block: Block
     review: Review
     comment: Comment | None
+    status: str | None = None
+
+    @property
+    def already(self) -> bool:
+        """Whether the comment already has the status asked for."""
+        return self.comment is not None and self.comment.issue_status == self.status
 
 
 @dataclass
@@ -42,6 +55,7 @@ class _Done:
 
     replied: bool = False
     status: str | None = None       # the status ReviewBoard reported
+    already: bool = False           # the comment had it: nothing was sent
 
 
 def _fetch_all(keys: list[K], fetch: Callable[[K], T]) -> list[T | RBError]:
@@ -54,6 +68,16 @@ def _fetch_all(keys: list[K], fetch: Callable[[K], T]) -> list[T | RBError]:
 
     with ThreadPoolExecutor(max_workers=_WORKERS) as pool:
         return list(pool.map(one, keys))
+
+
+def _status_to_set(word: str, comment: Comment, user: Callable[[], str]) -> str:
+    """The issue status a status word asks for on `comment`; `user()` is
+    called only for an issue that asks to verify."""
+    status = STATUS_WORDS[word]
+    if (status in ("resolved", "dropped") and comment.require_verification
+            and comment.author != user()):
+        return f"verifying-{status}"
+    return status
 
 
 def _check(api: RBApi, blocks: list[Block]) -> tuple[list[_Target], list[str]]:
@@ -84,10 +108,16 @@ def _check(api: RBApi, blocks: list[Block]) -> tuple[list[_Target], list[str]]:
                       if comment_key(c) == b.target), None)
         if found is None:
             errors.append(f"{where}: no such comment on this review request")
-        elif b.status is not None and not found[1].issue_opened:
+        elif b.status is None:
+            targets.append(_Target(b, *found))
+        elif not found[1].issue_opened:
             errors.append(f"{where}: the comment has no issue; drop the status word")
         else:
-            targets.append(_Target(b, *found))
+            try:
+                status = _status_to_set(b.status, found[1], api.user)
+                targets.append(_Target(b, *found, status))
+            except RBError as e:
+                errors.append(f"{where}: {e}")
     return targets, errors
 
 
@@ -139,15 +169,23 @@ def _check_drafts(api: RBApi, targets: list[_Target],
     return blocked, errors
 
 
-def _plan_line(b: Block, links: Links) -> str:
+def _plan_line(t: _Target, links: Links) -> str:
     """What a dry run says about a block."""
-    parts = (["reply"] if b.text else []) + ([f"set {b.status}"] if b.status else [])
+    b = t.block
+    parts = ["reply"] if b.text else []
+    if b.status and t.already:
+        parts.append(f"already {t.status}")
+    elif b.status:
+        plain = t.status == STATUS_WORDS[b.status]
+        parts.append(f"set {b.status}" + ("" if plain else f" ({t.status})"))
     return f"{links.show(b.request)} {b.target}  {', '.join(parts)}"
 
 
 def _done_line(b: Block, done: _Done, links: Links) -> str | None:
     """What was done for a block, or None when nothing was."""
-    parts = (["replied"] if done.replied else []) + ([done.status] if done.status else [])
+    parts = ["replied"] if done.replied else []
+    if done.status:
+        parts.append(f"already {done.status}" if done.already else done.status)
     return f"{links.show(b.request)} {b.target}  {', '.join(parts)}" if parts else None
 
 
@@ -184,10 +222,13 @@ def _post_review(api: RBApi, rid: str, review: Review,
             for _, d in texts:
                 d.replied = True
         for t, d in items:
-            if t.block.status:
-                assert t.comment is not None    # a review header has no status word
-                d.status = api.set_issue_status(rid, review.id, t.comment,
-                                                STATUS_WORDS[t.block.status])
+            if t.status is None:
+                continue
+            assert t.comment is not None        # a review header has no status word
+            if t.already:
+                d.status, d.already = t.status, True
+            else:
+                d.status = api.set_issue_status(rid, review.id, t.comment, t.status)
     except Exception as e:      # any failure: report what went out and what did not
         errors = [_describe(e)]
         if reply_id is not None:
@@ -227,8 +268,8 @@ def post_blocks(api: RBApi, blocks: list[Block], *, dry_run: bool, links: Links)
         return 1
 
     if dry_run:
-        for b in blocks:
-            print(_plan_line(b, links))
+        for t in targets:
+            print(_plan_line(t, links))
         print("Dry run: nothing was posted.")
         return 0
 

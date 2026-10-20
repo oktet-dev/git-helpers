@@ -79,6 +79,12 @@ def test_comment_without_issue_has_empty_status():
     assert c == Comment("general", 812, "ark-roma", TS, "Nice cleanup.", False, "")
 
 
+def test_require_verification_from_json():
+    data = diff_comment_json(extra_data={"require_verification": True})
+    assert comment_from_json("diff", data, path="x.c").require_verification
+    assert not comment_from_json("diff", diff_comment_json(), path="x.c").require_verification
+
+
 def test_interdiff_comment_from_json():
     data = diff_comment_json()
     data["links"]["interfilediff"] = link("/review-requests/19954/diffs/2/files/235111/")
