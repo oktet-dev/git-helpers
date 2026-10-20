@@ -36,11 +36,11 @@ install_skill() {
 
 usage() {
     cat <<EOF
-Usage: ./install.sh [--gg | --skill | -h]
+Usage: ./install.sh --full | --gg | --skill | -h
 
-Run it from the git-helpers checkout.
+Run it from the git-helpers checkout. Without an option it shows this help.
 
-  (no option)  link ~/.bashrc.gitgo, install the gg CLI, and print the
+  --full       link ~/.bashrc.gitgo, install the gg CLI, and print the
                snippets to add to ~/.bashrc and ~/.gitconfig
   --gg         only (re)install the gg CLI (uv tool install -e)
   --skill      only link skills/gg to ~/.claude/skills/gg: the Claude Code
@@ -50,10 +50,10 @@ EOF
 }
 
 case "$1" in
-    -h|--help) usage; exit 0 ;;
+    ""|-h|--help) usage; exit 0 ;;
+    --full) ;;
     --gg) install_gg_cli; exit 0 ;;
     --skill) install_skill; exit 0 ;;
-    "") ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
 esac
 

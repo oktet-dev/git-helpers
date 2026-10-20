@@ -1,4 +1,4 @@
-"""Tests for install.sh flags that need no network."""
+"""Tests for install.sh, with a temporary HOME and a fake uv."""
 
 import os
 import subprocess
@@ -6,12 +6,23 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+# Records its arguments instead of installing anything.
+_FAKE_UV = """#!/bin/sh
+echo "$@" >> "$HOME/uv.log"
+"""
+
 
 def _install(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    fake_bin = home / "fake-bin"
+    fake_bin.mkdir(exist_ok=True)
+    uv = fake_bin / "uv"
+    uv.write_text(_FAKE_UV)
+    uv.chmod(0o755)
     return subprocess.run(
         ["bash", "install.sh", *args],
         cwd=REPO,
-        env={**os.environ, "HOME": str(home)},
+        env={**os.environ, "HOME": str(home),
+             "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
         capture_output=True,
         text=True,
     )
@@ -19,13 +30,14 @@ def _install(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 class TestUsage:
     def test_help_lists_the_options(self, tmp_path: Path) -> None:
-        for flag in ("-h", "--help"):
-            r = _install(tmp_path, flag)
+        for flag in ("-h", "--help", None):
+            r = _install(tmp_path, *([flag] if flag else []))
             assert r.returncode == 0, r.stderr
             assert r.stdout.startswith("Usage: ./install.sh")
-            for option in ("--gg", "--skill", "--help"):
+            for option in ("--full", "--gg", "--skill", "--help"):
                 assert option in r.stdout
         assert not (tmp_path / ".bashrc.gitgo").exists()
+        assert not (tmp_path / "uv.log").exists()
 
     def test_unknown_option_installs_nothing(self, tmp_path: Path) -> None:
         r = _install(tmp_path, "--skil")
@@ -33,6 +45,15 @@ class TestUsage:
         assert "Unknown option: --skil" in r.stderr
         assert "Usage: ./install.sh" in r.stderr
         assert not (tmp_path / ".bashrc.gitgo").exists()
+
+
+class TestFull:
+    def test_links_bashrc_and_installs_gg(self, tmp_path: Path) -> None:
+        r = _install(tmp_path, "--full")
+        assert r.returncode == 0, r.stderr
+        assert (tmp_path / ".bashrc.gitgo").resolve() == REPO / "bashrc.gitgo"
+        assert (tmp_path / "uv.log").read_text() == f"tool install --reinstall -e {REPO}\n"
+        assert "./install.sh --skill" in r.stdout
 
 
 class TestSkillFlag:

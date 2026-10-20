@@ -11,10 +11,10 @@ Installation
 ```shell
 git clone <repo>
 cd git-helpers
-./install.sh
+./install.sh --full
 ```
 
-The installer will:
+`./install.sh` without an option shows its options. `--full` will:
 
 1. Symlink `bashrc.gitgo` to `~/.bashrc.gitgo`
 2. Install the Python `gg` CLI tool via `uv tool install`
