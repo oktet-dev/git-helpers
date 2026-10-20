@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import io
+import subprocess
 import sys
 
 import pytest
@@ -126,7 +127,40 @@ def test_code_not_available_when_rows_fail(repo: GitRepo, fake: FakeRB,
     assert "(rows 3-3): code not available" in capsys.readouterr().out
 
 
-NO_RBTOOLS = "[gg] gg comments needs RBTools: reinstall gg with ./install.sh --gg\n"
+def test_code_not_available_when_rows_lack_the_comment(
+        repo: GitRepo, fake: FakeRB, capsys: pytest.CaptureFixture[str]) -> None:
+    add_discussion(fake, "19954")
+    fake.set_rows(5, [DiffRow(i, i, f"old {i}", i, f"line {i}") for i in (5, 6)])
+    assert cli.main(["comments", "19954"]) == 0
+    out = capsys.readouterr().out
+    assert "    net-drv-ts/dcb/dcb_ets.c (rows 3-3): code not available\n" in out
+    assert "dcb_ets.c:\n" not in out
+
+
+@pytest.mark.parametrize("error", [
+    SystemExit(1),
+    subprocess.CalledProcessError(1, ["rbt", "api-get"]),
+    RuntimeError("planner bug"),
+])
+def test_explicit_ids_shown_when_placing_fails(repo: GitRepo, fake: FakeRB,
+                                               monkeypatch: pytest.MonkeyPatch,
+                                               capsys: pytest.CaptureFixture[str],
+                                               error: BaseException) -> None:
+    add_discussion(fake, "19954")
+    calls = []
+
+    def failing_planner(**kwargs: object) -> None:
+        calls.append(kwargs)
+        raise error
+
+    monkeypatch.setattr(comments, "branch_planner", failing_planner)
+    assert cli.main(["comments", "r/19954"]) == 0
+    out = capsys.readouterr().out
+    assert calls
+    assert "#37441" in out and "series" not in out
+
+
+NO_RBTOOLS ="[gg] gg comments needs RBTools: reinstall gg with ./install.sh --gg\n"
 
 
 @pytest.fixture
@@ -167,3 +201,6 @@ def test_help_lists_forms(capsys: pytest.CaptureFixture[str]) -> None:
         assert form in out
     assert "review <id>" in out
     assert "gg comments reply --help" in out
+    for text in ("verifying state", "from diff N", '">" marks the commented lines',
+                 "old-side", "60-", "interdiff", "local commit"):
+        assert text in out, text

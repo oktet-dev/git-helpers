@@ -77,17 +77,33 @@ def _code_lines(view: RequestView, d: Discussion) -> list[str]:
     if c.kind != "diff":
         return []
     excerpt = view.code.get(d.key)
-    if excerpt is None:
+    if excerpt is None or not any(e.marked for e in excerpt):
         first = c.first_row or 0
         last = first + (c.num_rows or 1) - 1
         return [f"    {c.path} (rows {first}-{last}): code not available"]
-    lines = [f"    {c.path}:{line_span(excerpt)}"]
-    width = max((len(str(e.line)) for e in excerpt if e.line is not None), default=0)
-    for e in excerpt:
-        number = str(e.line) if e.line is not None else ""
+    lines = [f"    {c.path}:{line_span(excerpt)}{_old_note(excerpt)}"]
+    # Old-side (removed) line numbers end in "-"; when there are any, the
+    # new-side ones end in a space so that the digits line up.
+    any_old = any(e.old for e in excerpt)
+    numbers = [
+        "" if e.line is None else f"{e.line}{('-' if e.old else ' ') if any_old else ''}"
+        for e in excerpt
+    ]
+    width = max(map(len, numbers), default=0)
+    for e, number in zip(excerpt, numbers):
         text = f"{number:>{width}}  {e.text}".rstrip()
         lines.append(("      > " if e.marked else "        ") + text)
     return lines
+
+
+def _old_note(excerpt: list[ExcerptLine]) -> str:
+    """What the line numbers are when commented lines were removed."""
+    marked = [e for e in excerpt if e.marked]
+    if all(e.old for e in marked):
+        return " (removed lines; old line numbers)"
+    if any(e.old for e in marked):
+        return " (with removed lines; old line numbers end in -)"
+    return ""
 
 
 def _message_lines(d: Discussion) -> list[str]:

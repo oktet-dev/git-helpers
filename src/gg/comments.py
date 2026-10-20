@@ -36,8 +36,18 @@ Without --all only discussions that wait for someone are shown.
 
 States:
   needs you             the reviewer spoke last, or a new issue is open
-  waiting on reviewer   you answered an open issue
+  waiting on reviewer   you answered an open issue, or an issue in a
+                        verifying state (a fix or drop the reviewer is to
+                        confirm)
   done                  issue resolved or dropped, or a remark you answered
+
+Code: a diff comment shows the code it is on as it was in the diff
+revision it was made on ("diff N of M": the code is from diff N, what the
+reviewer saw), with two lines of context; ">" marks the commented lines.
+Line numbers are new-side; removed lines show their old-side numbers with
+a "-" after them ("  > 60-  ..."). A comment on an interdiff has no code
+("code not available": ReviewBoard's API does not serve interdiff rows).
+The current code is in the local commit: read it there.
 
 Discussions are named by a key: #<id> (diff comment), #g<id> (general
 comment), #a<id> (file attachment comment), review <id> (a review's top
@@ -224,15 +234,28 @@ def _posted(planner: BranchPlanner, specs: list) -> tuple[list[tuple[str, Place]
     ], None
 
 
+def _places(cwd: Path) -> dict[str, Place]:
+    """Where the branch's posted requests sit, by review id; {} if that cannot be had.
+
+    Only decoration for explicitly given ids, so a failure of the branch
+    plan (git, `rbt api-get`, which may exit) leaves the requests without
+    places instead of stopping `gg comments`.
+    """
+    try:
+        if not git.has_upstream(cwd=cwd):
+            return {}
+        return dict(_posted(branch_planner(cwd=cwd), [])[0])
+    except (Exception, SystemExit):
+        return {}
+
+
 def _scope(args: argparse.Namespace, cwd: Path) -> list[tuple[str, Place | None]] | str:
     """The requests to show with their places, or an error message."""
     specs = [spec for one in args.series for spec in one]
     if args.ids:
         if specs:
             return "-s and review request ids cannot be combined."
-        places: dict[str, Place] = {}
-        if git.has_upstream(cwd=cwd):
-            places = dict(_posted(branch_planner(cwd=cwd), [])[0])
+        places = _places(cwd)
         return [(rid, places.get(rid)) for rid in args.ids]
     posted, error = _posted(branch_planner(cwd=cwd), specs)
     return error if error is not None else list(posted)

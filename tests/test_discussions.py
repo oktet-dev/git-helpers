@@ -168,11 +168,27 @@ def test_excerpt_of_removed_lines():
     rs = [DiffRow(row=n, old_line=n + 10, old_text=f"gone{n + 10}", new_line=None, new_text="")
           for n in range(50, 52)]
     ex = code_excerpt(rs, 50, 2, context=2)
-    assert [(e.line, e.text) for e in ex] == [(60, "gone60"), (61, "gone61")]
+    assert [(e.line, e.text, e.old) for e in ex] == [(60, "gone60", True), (61, "gone61", True)]
     assert line_span(ex) == "60-61"
+
+
+def test_excerpt_new_side_lines_are_not_old():
+    assert not any(e.old for e in code_excerpt(rows(), 141, 3))
+
+
+def test_line_span_prefers_new_side_lines():
+    removed = [DiffRow(row=50, old_line=60, old_text="gone", new_line=None, new_text=""),
+               DiffRow(row=51, old_line=61, old_text="same", new_line=55, new_text="same")]
+    assert line_span(code_excerpt(removed, 50, 2)) == "55"
 
 
 def test_excerpt_at_file_start():
     ex = code_excerpt(rows(1, 10), 1, 1, context=2)
     assert [e.line for e in ex] == [1, 2, 3]
     assert ex[0].marked
+
+
+def test_excerpt_without_the_commented_rows_is_none():
+    assert code_excerpt(rows(1, 10), 20, 2) is None
+    assert code_excerpt(rows(1, 10), 12, 1) is None      # row 10 is only context
+    assert code_excerpt([], 1, 1) is None

@@ -40,11 +40,16 @@ class Discussion:
 
 @dataclass(frozen=True)
 class ExcerptLine:
-    """One line of a code excerpt; `marked` lines are the commented ones."""
+    """One line of a code excerpt; `marked` lines are the commented ones.
+
+    `line` is a new-side line number, or an old-side one when `old` (a
+    removed line).
+    """
 
     marked: bool
     line: int | None
     text: str
+    old: bool = False
 
 
 def comment_key(comment: Comment) -> str:
@@ -101,8 +106,12 @@ def ship_its(reviews: list[Review]) -> list[str]:
 
 
 def code_excerpt(rows: list[DiffRow], first_row: int, num_rows: int,
-                 *, context: int = 2) -> list[ExcerptLine]:
-    """The commented rows, marked, with `context` rows on each side that exist."""
+                 *, context: int = 2) -> list[ExcerptLine] | None:
+    """The commented rows, marked, with `context` rows on each side that exist.
+
+    A row shows its new-side line, or its old-side line (`old`) when it
+    was removed. None when none of the commented rows is in `rows`.
+    """
     last_row = first_row + num_rows - 1
     lines = []
     for r in rows:
@@ -111,14 +120,19 @@ def code_excerpt(rows: list[DiffRow], first_row: int, num_rows: int,
             if r.new_line is not None:
                 lines.append(ExcerptLine(marked, r.new_line, r.new_text))
             else:
-                lines.append(ExcerptLine(marked, r.old_line, r.old_text))
-    return lines
+                lines.append(ExcerptLine(marked, r.old_line, r.old_text, old=True))
+    return lines if any(e.marked for e in lines) else None
 
 
 def line_span(excerpt: list[ExcerptLine]) -> str:
-    """`141-143` for the marked lines of an excerpt, or `141` for one line."""
-    marked = [e.line for e in excerpt if e.marked and e.line is not None]
-    if not marked:
+    """`141-143` for the marked lines of an excerpt, or `141` for one line.
+
+    New-side lines when any is marked, else the old-side lines.
+    """
+    marked = [e for e in excerpt if e.marked and e.line is not None]
+    new = [e.line for e in marked if not e.old]
+    numbers = new or [e.line for e in marked]
+    if not numbers:
         return ""
-    lo, hi = min(marked), max(marked)
+    lo, hi = min(numbers), max(numbers)
     return str(lo) if lo == hi else f"{lo}-{hi}"

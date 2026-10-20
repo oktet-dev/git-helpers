@@ -65,6 +65,38 @@ def test_spec_example_layout():
     )
 
 
+def test_removed_lines_show_old_numbers():
+    code = {"#37441": [
+        ExcerptLine(False, 58, "a"),
+        ExcerptLine(False, 59, "b"),
+        ExcerptLine(True, 60, "gone one", old=True),
+        ExcerptLine(True, 61, "gone two", old=True),
+        ExcerptLine(False, 60, "c"),
+    ]}
+    lines = fmt(view(diff_comment(), code=code)).splitlines()
+    assert lines[3:9] == [
+        "    net-drv-ts/dcb/dcb_ets.c:60-61 (removed lines; old line numbers)",
+        "        58   a",
+        "        59   b",
+        "      > 60-  gone one",
+        "      > 61-  gone two",
+        "        60   c",
+    ]
+
+
+def test_partly_removed_lines_say_so():
+    code = {"#37441": [
+        ExcerptLine(True, 60, "gone", old=True),
+        ExcerptLine(True, 141, "kept"),
+    ]}
+    lines = fmt(view(diff_comment(), code=code)).splitlines()
+    assert lines[3:6] == [
+        "    net-drv-ts/dcb/dcb_ets.c:141 (with removed lines; old line numbers end in -)",
+        "      >  60-  gone",
+        "      > 141   kept",
+    ]
+
+
 def test_comment_without_issue_and_general_comment():
     c = diff_comment(id=812, kind="general", issue_opened=False, issue_status="",
                      severity=None, path=None, diff_revision=None, text="Nice.")
