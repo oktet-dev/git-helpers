@@ -22,8 +22,25 @@ install_gg_cli() {
     fi
 }
 
+install_skill() {
+    local dest=~/.claude/skills/gg
+    echo "Install the gg skill for Claude Code"
+    try mkdir -p ~/.claude/skills
+    if [ -L "$dest" ]; then
+        try rm -f "$dest"
+    elif [ -e "$dest" ]; then
+        fail "$dest exists and is not a symlink; move it away first"
+    fi
+    try ln -s "${GG_GIT_HELPERS}/skills/gg" "$dest"
+}
+
 if [ "$1" = "--gg" ]; then
     install_gg_cli
+    exit 0
+fi
+
+if [ "$1" = "--skill" ]; then
+    install_skill
     exit 0
 fi
 
@@ -63,3 +80,4 @@ cat <<EOF
 EOF
 
 echo "If you're on mac - make sure gsed is in PATH"
+echo "To teach Claude Code agents about gg, run: ./install.sh --skill"

@@ -27,6 +27,17 @@ You can install it later with:
 ./install.sh --gg
 ```
 
+To teach Claude Code agents about `gg` (its commands, the posting and
+review-comment workflows, and that nothing goes to ReviewBoard without your
+go), install the `gg` skill:
+
+```shell
+./install.sh --skill
+```
+
+It links `skills/gg` to `~/.claude/skills/gg`, so it follows this checkout.
+An existing `~/.claude/skills/gg` that is not a symlink is left alone.
+
 On macOS, make sure `gsed` is in PATH.
 
 Command reference

@@ -14,6 +14,7 @@ Git-helpers is a hybrid bash + Python toolkit that implements a branch-based dev
 ```shell
 ./install.sh          # symlinks bashrc.gitgo + installs gg via `uv tool install -e`
 ./install.sh --gg     # only (re)install the gg CLI
+./install.sh --skill  # link skills/gg (agent guide to gg) into ~/.claude/skills/gg
 ```
 
 `uv` is required for the Python side; if it's missing, the installer skips `gg` and prints the command to run later.
