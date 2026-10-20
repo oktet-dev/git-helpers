@@ -29,7 +29,7 @@ class FakeRB:
         self._next_reply = 1000
         self._calls: Counter[str] = Counter()
         self.log: list[tuple] = []
-        self.fail: dict[str, tuple[int, RBError]] = {}
+        self.fail: dict[str, tuple[int, BaseException]] = {}
         self.status_result: dict[int, str] = {}
 
     # -- setup ----------------------------------------------------------

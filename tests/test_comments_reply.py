@@ -290,6 +290,51 @@ def test_failure_deletes_draft_and_prints_unsent(monkeypatch: pytest.MonkeyPatch
     assert fake.draft_reply("19917", 36100) is None
 
 
+def test_unexpected_error_deletes_draft_and_prints_unsent(
+        monkeypatch: pytest.MonkeyPatch, fake: FakeRB,
+        capsys: pytest.CaptureFixture[str]) -> None:
+    text = ("=== r/19954 #37441\nA.\n"
+            "=== r/19917 #37502\nB1.\n"
+            "=== r/19920 #37510 dropped\nC.\n")
+    fake.fail["add_reply_comment"] = (2, ValueError("Expecting value: line 1 column 1"))
+    assert reply(monkeypatch, text) == 1
+    assert fake.log == [
+        ("create_reply", "19954", 36005),
+        ("add_reply_comment", "19954", 36005, 1001, 37441, "A."),
+        ("publish_reply", "19954", 36005, 1001),
+        ("create_reply", "19917", 36100),
+        ("add_reply_comment", "19917", 36100, 1002, 37502, "B1."),
+        ("delete_reply", "19917", 36100, 1002),
+    ]
+    captured = capsys.readouterr()
+    assert ("[gg] r/19917 review 36100: unexpected error: "
+            "ValueError('Expecting value: line 1 column 1')\n") in captured.err
+    head, blocks = unsent(captured.out)
+    assert head == "r/19954 #37441  replied\n"
+    assert blocks == parse_blocks(text)[1:]
+    assert fake.draft_reply("19917", 36100) is None
+
+
+def test_unexpected_delete_error_is_reported(monkeypatch: pytest.MonkeyPatch, fake: FakeRB,
+                                             capsys: pytest.CaptureFixture[str]) -> None:
+    fake.fail["publish_reply"] = (1, RBError("boom"))
+    fake.fail["delete_reply"] = (1, ValueError("bad page"))
+    assert reply(monkeypatch, TWO) == 1
+    captured = capsys.readouterr()
+    assert "boom" in captured.err
+    assert "could not delete the unpublished reply 1001 (unexpected error: " \
+           "ValueError('bad page'))" in captured.err
+    head, blocks = unsent(captured.out)
+    assert head == ""
+    assert blocks == parse_blocks(TWO)
+
+
+def test_interrupt_is_not_swallowed(monkeypatch: pytest.MonkeyPatch, fake: FakeRB) -> None:
+    fake.fail["publish_reply"] = (1, KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        reply(monkeypatch, TWO)
+
+
 def test_delete_failure_is_reported(monkeypatch: pytest.MonkeyPatch, fake: FakeRB,
                                     capsys: pytest.CaptureFixture[str]) -> None:
     fake.fail["publish_reply"] = (1, RBError("boom"))

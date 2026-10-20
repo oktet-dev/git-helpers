@@ -165,7 +165,9 @@ def _post_review(api: RBApi, rid: str, review: Review,
     """One review's reply, published, then its status changes; marks what is done.
 
     Returns the error messages when a call fails (empty: all done). A reply
-    created but not published by then is deleted.
+    created but not published by then is deleted. Any exception counts as a
+    failure, not only RBError, so that the caller can still say what was not
+    posted.
     """
     texts = [(t, d) for t, d in items if t.block.text]
     reply_id: int | None = None
@@ -186,17 +188,22 @@ def _post_review(api: RBApi, rid: str, review: Review,
                 assert t.comment is not None    # a review header has no status word
                 d.status = api.set_issue_status(rid, review.id, t.comment,
                                                 STATUS_WORDS[t.block.status])
-    except RBError as e:
-        errors = [str(e)]
+    except Exception as e:      # any failure: report what went out and what did not
+        errors = [_describe(e)]
         if reply_id is not None:
             try:
                 api.delete_reply(rid, review.id, reply_id)
-            except RBError as delete_error:
+            except Exception as delete_error:
                 errors.append(f"could not delete the unpublished reply {reply_id} "
-                              f"({delete_error}); discard it on ReviewBoard before "
-                              f"sending again")
+                              f"({_describe(delete_error)}); discard it on ReviewBoard "
+                              f"before sending again")
         return errors
     return []
+
+
+def _describe(e: Exception) -> str:
+    """An RBError's message; any other error (a bug, an odd server answer) with its type."""
+    return str(e) if isinstance(e, RBError) else f"unexpected error: {e!r}"
 
 
 def post_blocks(api: RBApi, blocks: list[Block], *, dry_run: bool, links: Links) -> int:
