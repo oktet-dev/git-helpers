@@ -1316,10 +1316,52 @@ class TestSeriesOption:
 
     def test_bad_patch_spec(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
         self._posted_stack(git_repo)
-        for value in ("3:x", "3:2-1", "3:", "3:0"):
+        for value in ("3:x", "3:2-1", "3:", "3:0", "$$", "3:$-2", "3:$x"):
             r = git_repo.run_gg("rbt-sync", "-s", value)
             assert r.returncode == 2, value
             assert "series" in r.stderr
+
+    def test_dollar_is_the_last_series(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._posted_stack(git_repo)
+        out = _plain(git_repo.run_gg("rbt-sync", "-d", "-s", "$").stdout)
+        assert re.search(r"Series 2: 2 patches, .*outside range", out)
+        assert re.search(r"\[1/1\]\s+create\s+\S+\s+--\s+n1", out)
+
+    def test_dollar_peels_new_series_off_the_top(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        self._posted_stack(git_repo)
+        for subject in ("n2", "n3", "n4"):
+            git_repo.commit(subject)
+        assert git_repo.run_gg("rbt-sync", "-s", "$:1-2").returncode == 0
+        calls = rbt_mock.call_count()
+        r = git_repo.run_gg("rbt-sync", "-s", "$:1-2")
+        assert r.returncode == 0, r.stderr
+        posts = [c for c in rbt_mock.calls()[calls:] if c and c[0] == "post"]
+        assert [next(a for a in c if a.startswith("--summary=")) for c in posts] == [
+            "--summary=[1/2]: n3", "--summary=[2/2]: n4"]
+
+    def test_dollar_is_the_last_patch(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._posted_stack(git_repo)
+        git_repo.commit("n2")
+        git_repo.commit("n3")
+        out = _plain(git_repo.run_gg("rbt-sync", "-d", "-s", "3:1-$").stdout)
+        rows = [line for line in out.splitlines() if "create" in line]
+        assert [row.split()[-1] for row in rows] == ["n1", "n2", "n3"]
+        out = _plain(git_repo.run_gg("rbt-sync", "-d", "-s", "2:$").stdout)
+        lines = [line.rstrip() for line in out.splitlines()]
+        assert any(line.endswith(" c2") for line in lines)
+        assert not any(line.endswith(" c1") for line in lines)
+
+    def test_dollar_errors_name_the_series(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        self._posted_stack(git_repo)
+        git_repo.commit("n2")
+        r = git_repo.run_gg("rbt-sync", "-s", "$:3")
+        assert r.returncode == 1
+        assert "series 3 ($) has 2 patches; no patch 3." in r.stderr
+        r = git_repo.run_gg("rbt-sync", "-s", "2:3-$")
+        assert r.returncode == 1
+        assert "no patch 3" in r.stderr
 
 
 class TestPartialLanding:

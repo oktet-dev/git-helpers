@@ -54,7 +54,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p.add_argument("-s", "--series", action="append", default=[], type=_series_spec,
                    metavar="N[,N...]|N:P[-Q][,...]",
                    help="act only on these series, or on patches P..Q of series N "
-                        "(numbers as shown by -d); repeatable; not with a range")
+                        "(numbers as shown by -d; $ is the last series or patch); "
+                        "repeatable; not with a range")
     p.add_argument("range", nargs="?", default=None, help="revision range (default: tracking..HEAD)")
     p.set_defaults(func=run)
 
@@ -63,14 +64,23 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
 SeriesSpec = tuple[int, list[tuple[int, int]] | None]
 
 
+# "$" in a -s value: the last series of the plan, or the last patch of a series.
+_LAST = 0
+
+
 def _positive(token: str, what: str) -> int:
+    if token.strip() == "$":
+        return _LAST
     if not token.strip().isdigit() or int(token) < 1:
         raise argparse.ArgumentTypeError(f"invalid series {what}: {token!r}")
     return int(token)
 
 
 def _series_spec(text: str) -> list[SeriesSpec]:
-    """Parse a -s value: "3", "3,4" (series) or "4:1-3,5" (patches of series 4)."""
+    """Parse a -s value: "3", "3,4" (series) or "4:1-3,5" (patches of series 4).
+
+    "$" stands for the last series ("$:1-3") or the last patch ("4:2-$").
+    """
     if ":" not in text:
         return [(_positive(token, "number"), None) for token in text.split(",")]
     number, patches = text.split(":", 1)
@@ -79,7 +89,7 @@ def _series_spec(text: str) -> list[SeriesSpec]:
         first, _, last = token.partition("-")
         a = _positive(first, "patch")
         b = _positive(last, "patch") if last else a
-        if b < a:
+        if (a == _LAST and b != _LAST) or (_LAST not in (a, b) and b < a):
             raise argparse.ArgumentTypeError(f"invalid series patch range: {token!r}")
         ranges.append((a, b))
     return [(_positive(number, "number"), ranges)]
@@ -91,21 +101,25 @@ def _selected_revs(
     """Commits picked by -s specs in a whole-branch plan, or an error message."""
     revs: set[str] = set()
     for number, ranges in specs:
+        name = str(number)
+        if number == _LAST:
+            number = len(plan.series)
+            name = f"{number} ($)"
         if number > len(plan.series):
             return f"no series {number} on '{branch_name}' (it has {len(plan.series)})."
         series = plan.series[number - 1]
         actions = series.actions
-        picked = range(1, len(actions) + 1) if ranges is None else [
-            k for a, b in ranges for k in range(a, b + 1)
+        last = len(actions)
+        spans = [(1, last)] if ranges is None else [
+            (last if a == _LAST else a, last if b == _LAST else b) for a, b in ranges
         ]
-        if max(picked) > len(actions):
-            return (
-                f"series {number} has {len(actions)} patches; "
-                f"no patch {max(picked)}."
-            )
+        top = max(max(span) for span in spans)
+        if top > last:
+            return f"series {name} has {last} patches; no patch {top}."
+        picked = [k for a, b in spans for k in range(a, b + 1)]
         if series.new and min(picked) != 1:
             return (
-                f"series {number} is new: the selection must start at patch 1 "
+                f"series {name} is new: the selection must start at patch 1 "
                 "(patches left before it would later join the series below)."
             )
         revs.update(actions[k - 1].new_commit.rev for k in picked)

@@ -58,6 +58,7 @@ operations support `-d`/`--dry` for dry-run.
 | `git gg rbt-sync <range>` | Post only the commits in `<range>`; posted commits outside it are not re-posted, except for a dependency-only re-post (`keep+dep`) of an unchanged one (reviews of commits gone from the branch are still closed or forgotten) |
 | `git gg rbt-sync -s 3` | Act only on series 3 as numbered by `rbt-sync -d` (same as giving its range; `-s 3,4` for several; not combined with a range) |
 | `git gg rbt-sync -s 4:1-3,5` | Act only on patches 1-3 and 5 of series 4 (the Nth patch as listed by `rbt-sync -d`); repeat `-s` to combine series. For a new series the selection must start at patch 1; the patches left out are posted later as the next series |
+| `git gg rbt-sync -s $:1-3` | `$` is the last series (the new one when there are unposted commits) or, after `:`, the last patch (`-s 3:2-$`). Repeating `-s $:1-3` posts the unposted commits three at a time, each batch as its own series. No quoting is needed in bash or zsh; `$-1` is not supported (bash expands `$-`) |
 | `git gg rbt-sync -i` | Interactive mode -- edit the sync plan in `$EDITOR` before executing; `---` lines separate series (delete one to merge two series, add one between two rows to split; changed series are renumbered and re-posted). With a range, series cannot be split or merged |
 | `git gg rbt-sync -U alice -G devteam` | Override reviewers/groups for new reviews |
 | `git gg rbt-sync --no-numbers` | Suppress `[i/N]:` prefix on posted reviews |
