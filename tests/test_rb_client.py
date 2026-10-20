@@ -279,8 +279,10 @@ def can(path: str, *actions: str) -> dict:
     return {a: {"href": f"{API}/{path}", "method": methods[a]} for a in actions}
 
 
-def reply_json(id: int, *, public: bool, body_top: str = "", **links) -> dict:
+def reply_json(id: int, *, public: bool, body_top: str = "", body_bottom: str = "",
+               **links) -> dict:
     return {"id": id, "timestamp": TS2, "public": public, "body_top": body_top,
+            "body_bottom": body_bottom,
             "links": {"user": link("/users/kostik/", "kostik"), **links}}
 
 
@@ -403,6 +405,16 @@ def test_draft_reply():
     api, _ = fake_api(routes)
     assert api.draft_reply("19954", 36005) == Reply(901, "kostik", TS2, False, "Thanks", [
         ReplyComment("general", 812, "kostik", TS2, "Sure.")])
+
+
+def test_draft_reply_reads_footer_reply():
+    routes = read_routes()
+    routes[("GET", REVIEW + "replies/draft/")] = item(
+        "reply", reply_json(901, public=False, body_bottom="About the footer."))
+    routes.update(no_comments(DRAFT))
+    api, _ = fake_api(routes)
+    assert api.draft_reply("19954", 36005) == Reply(
+        901, "kostik", TS2, False, "", [], body_bottom="About the footer.")
 
 
 def write_routes() -> dict:

@@ -362,6 +362,7 @@ class RBToolsApi:
             public=bool(data["public"]),
             body_top=data.get("body_top") or "",
             comments=comments,
+            body_bottom=data.get("body_bottom") or "",
         )
 
     def _comment(self, rid: str, kind: str, data: dict) -> Comment:

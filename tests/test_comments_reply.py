@@ -207,6 +207,21 @@ def test_draft_with_top_text_stops_dry_run(monkeypatch: pytest.MonkeyPatch, fake
     assert fake.log == []
 
 
+def test_draft_with_only_footer_reply_stops_whole_batch(
+        monkeypatch: pytest.MonkeyPatch, fake: FakeRB,
+        capsys: pytest.CaptureFixture[str]) -> None:
+    fake.set_draft("19954", 36005, Reply(902, "kostik", NOW, False, "", [],
+                                         body_bottom="About the footer: not yet."))
+    text = "=== r/19954 #37442\nA.\n=== r/19917 #37502\nB.\n"
+    assert reply(monkeypatch, text) == 1
+    captured = capsys.readouterr()
+    assert ("[gg] r/19954 review 36005: you have an unpublished reply draft there; "
+            "nothing was posted.") in captured.err
+    assert "  to review 36005's footer:\n    About the footer: not yet.\n" in captured.err
+    assert captured.out == ""
+    assert fake.log == []
+
+
 def test_draft_read_error_posts_nothing(monkeypatch: pytest.MonkeyPatch, fake: FakeRB,
                                         capsys: pytest.CaptureFixture[str]) -> None:
     fake.fail["draft_reply"] = (1, RBError("reading your reply draft failed"))

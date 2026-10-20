@@ -100,7 +100,7 @@ def _by_review(targets: list[_Target]) -> list[list[int]]:
 
 
 def _has_content(draft: Reply) -> bool:
-    return bool(draft.comments) or bool(draft.body_top.strip())
+    return bool(draft.comments or draft.body_top.strip() or draft.body_bottom.strip())
 
 
 def _indented(text: str) -> str:
@@ -118,6 +118,8 @@ def _draft_report(rid: str, review: Review, draft: Reply) -> str:
                          if c.id == rc.reply_to and c.kind == rc.kind), None)
         key = comment_key(answered) if answered else f"{rc.kind} comment {rc.reply_to}"
         lines += [f"  to {key}:", _indented(rc.text.strip())]
+    if draft.body_bottom.strip():
+        lines += [f"  to review {review.id}'s footer:", _indented(draft.body_bottom.strip())]
     return "\n".join(lines)
 
 

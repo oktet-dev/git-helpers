@@ -51,7 +51,11 @@ class ReplyComment:
 
 @dataclass(frozen=True)
 class Reply:
-    """A reply to a review; `body_top` answers the review's top text, "" if none."""
+    """A reply to a review.
+
+    `body_top` answers the review's top text and `body_bottom` its footer;
+    each is "" if the reply has none.
+    """
 
     id: int
     author: str
@@ -59,6 +63,7 @@ class Reply:
     public: bool
     body_top: str
     comments: list[ReplyComment]
+    body_bottom: str = ""
 
 
 @dataclass(frozen=True)
