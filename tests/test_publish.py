@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from gg import review_store
 from tests.conftest import GitRepo, RbtMock
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -155,3 +156,43 @@ class TestNothingToPublish:
         assert r.returncode == 0, r.stderr
         assert "failed" not in r.stderr
         assert "r/1000: no draft to publish" in r.stdout
+
+
+class TestPublishOnlyDrafts:
+    def _publishes(self, rbt_mock: RbtMock, since: int) -> list[str]:
+        return [c[1] for c in rbt_mock.calls()[since:] if c and c[0] == "publish"]
+
+    def test_publishes_only_reviews_with_a_draft(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        assert git_repo.run_gg("rbt-sync", "-p").returncode == 0
+        git_repo.commit("add tests")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        last = review_store.load_reviews("feature", cwd=git_repo.work_dir)[-1]
+        calls = rbt_mock.call_count()
+
+        r = git_repo.run_gg("publish")
+        assert r.returncode == 0, r.stderr
+        assert self._publishes(rbt_mock, calls) == [last.review_id]
+
+        calls = rbt_mock.call_count()
+        r = git_repo.run_gg("publish")
+        assert r.returncode == 0
+        assert self._publishes(rbt_mock, calls) == []
+        assert "No unpublished drafts" in r.stdout + r.stderr
+
+    def test_all_tries_every_review(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        assert git_repo.run_gg("rbt-sync", "-p").returncode == 0
+        ids = [e.review_id for e in review_store.load_reviews("feature", cwd=git_repo.work_dir)]
+        calls = rbt_mock.call_count()
+
+        r = git_repo.run_gg("publish", "--all")
+        assert r.returncode == 0, r.stderr
+        assert self._publishes(rbt_mock, calls) == ids

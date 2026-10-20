@@ -38,8 +38,8 @@ All `go*` git subcommands follow the same pattern: a git alias in `gitconfig.go`
 Entry point: `gg.cli:main` (exposed as the `gg` script via pyproject). `cli.py` dispatches to subcommand modules, each of which registers its own argparse subparser:
 
 - **rbt.py** -- `gg rbt`: post a commit series to ReviewBoard. With `-u --publish` it also calls `rbt publish` on unchanged drafts (looking up the review id from `reviews.db`).
-- **sync.py** -- `gg rbt-sync`: reconcile the branch, as a list of patch series, against the posted reviews (keep/update/keep+dep/create/discard/submit/forget), with `-i` to edit the plan in `$EDITOR` (`---` lines split/merge series), `--new` to forget the branch's own record, `--close` to close everything. With `-p`, KEEP entries are still pushed through `rbt publish`.
-- **publish.py** -- `gg publish`: read `reviews.db` for the current branch and run `rbt publish <id>` on every entry. The "post drafts now, publish later" half of the workflow.
+- **sync.py** -- `gg rbt-sync`: reconcile the branch, as a list of patch series, against the posted reviews (keep/update/keep+dep/create/discard/submit/forget), with `-i` to edit the plan in `$EDITOR` (`---` lines split/merge series), `--new` to forget the branch's own record, `--close` to close everything. With `-p`, a KEEP entry is pushed through `rbt publish` only when `reviews.db` records an unpublished draft gg left on it.
+- **publish.py** -- `gg publish`: read `reviews.db` for the current branch and run `rbt publish <id>` on every entry with an unpublished draft (`--all`: every entry), then clear their draft marks. The "post drafts now, publish later" half of the workflow.
 - **rbt_import.py** -- `gg rbt-import`: walk an existing RB dependency chain and populate `reviews.db`.
 - **db.py** -- `gg db`: list/clear/reinit state in `.gg/reviews.db`.
 - **comments.py** -- `gg comments`: list the reviewers' discussions on the branch's review requests (the whole branch, `-s` series as in `rbt-sync`, or given ids) with the commented code; `gg comments reply` (routed here by `cli.main`) posts replies and issue status changes through `reply_post.py`. Unlike the rest of gg, which shells out to `rbt`, `gg comments` uses RBTools as a Python library (`rb_client.py`).
@@ -48,7 +48,7 @@ Supporting modules: `series.py` (series planner: splits the branch into series, 
 
 ### State
 
-Per-repo state lives in `.gg/reviews.db` (SQLite, WAL mode) at the repo root, keyed by branch. Stores review entries (branch, position, review_id, subject, diff_hash, series -- the number of the patch series the review belongs to, 1 from the bottom of the branch; `position` runs along the whole branch) and diff-hash cache. `.gg/` is gitignored.
+Per-repo state lives in `.gg/reviews.db` (SQLite, WAL mode) at the repo root, keyed by branch. Stores review entries (branch, position, review_id, subject, diff_hash, series -- the number of the patch series the review belongs to, 1 from the bottom of the branch; `position` runs along the whole branch; draft -- gg posted it without publishing, so an unpublished draft waits) and diff-hash cache. `.gg/` is gitignored.
 
 ### Workflow pattern
 

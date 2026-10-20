@@ -49,6 +49,15 @@ class TestReviewCRUD:
         loaded = review_store.load_reviews("feature", cwd=git_repo.work_dir)
         assert [e.series for e in loaded] == [1, 2]
 
+    def test_draft_round_trip(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
+        entries = [
+            ReviewEntry("feature", 1, "1000", "a", "aaa", draft=True),
+            ReviewEntry("feature", 2, "1001", "b", "bbb"),
+        ]
+        review_store.save_reviews(entries, cwd=git_repo.work_dir)
+        loaded = review_store.load_reviews("feature", cwd=git_repo.work_dir)
+        assert [e.draft for e in loaded] == [True, False]
+
     def test_old_schema_gets_series_column(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
     ) -> None:
@@ -64,7 +73,7 @@ class TestReviewCRUD:
         conn.commit()
         conn.close()
         loaded = review_store.load_reviews("feature", cwd=git_repo.work_dir)
-        assert [(e.review_id, e.series) for e in loaded] == [("1000", 1)]
+        assert [(e.review_id, e.series, e.draft) for e in loaded] == [("1000", 1, False)]
 
     def test_save_replaces(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
         entries1 = [ReviewEntry("feature", 1, "1000", "old", "aaa")]

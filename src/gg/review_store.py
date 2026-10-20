@@ -28,6 +28,8 @@ class ReviewEntry:
     subject: str
     diff_hash: str
     series: int = 1
+    # gg posted it without publishing: an unpublished draft is waiting.
+    draft: bool = False
 
 
 def _db_path(*, cwd: Path | None = None) -> Path:
@@ -47,6 +49,7 @@ def _connect(*, cwd: Path | None = None) -> sqlite3.Connection:
             subject TEXT NOT NULL,
             diff_hash TEXT NOT NULL,
             series INTEGER NOT NULL DEFAULT 1,
+            draft INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (branch, position)
         );
         CREATE TABLE IF NOT EXISTS diff_hashes (
@@ -61,6 +64,11 @@ def _connect(*, cwd: Path | None = None) -> sqlite3.Connection:
             "ALTER TABLE reviews ADD COLUMN series INTEGER NOT NULL DEFAULT 1"
         )
         conn.commit()
+    if "draft" not in columns:
+        conn.execute(
+            "ALTER TABLE reviews ADD COLUMN draft INTEGER NOT NULL DEFAULT 0"
+        )
+        conn.commit()
     return conn
 
 
@@ -72,11 +80,11 @@ def load_reviews(branch: str, *, cwd: Path | None = None) -> list[ReviewEntry]:
     conn = _connect(cwd=cwd)
     try:
         rows = conn.execute(
-            "SELECT branch, position, review_id, subject, diff_hash, series "
+            "SELECT branch, position, review_id, subject, diff_hash, series, draft "
             "FROM reviews WHERE branch = ? AND review_id != '' ORDER BY position",
             (branch,),
         ).fetchall()
-        return [ReviewEntry(*row) for row in rows]
+        return [ReviewEntry(*row[:6], draft=bool(row[6])) for row in rows]
     finally:
         conn.close()
 
@@ -95,10 +103,11 @@ def save_reviews(entries: list[ReviewEntry], *, cwd: Path | None = None) -> None
         conn.execute("DELETE FROM reviews WHERE branch = ?", (branch,))
         conn.executemany(
             "INSERT INTO reviews "
-            "(branch, position, review_id, subject, diff_hash, series) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "(branch, position, review_id, subject, diff_hash, series, draft) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
-                (e.branch, e.position, e.review_id, e.subject, e.diff_hash, e.series)
+                (e.branch, e.position, e.review_id, e.subject, e.diff_hash,
+                 e.series, int(e.draft))
                 for e in entries
             ],
         )

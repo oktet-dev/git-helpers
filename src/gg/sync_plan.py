@@ -16,9 +16,15 @@ def _will_post(action: SyncAction) -> bool:
     return action.kind in (ActionKind.UPDATE, ActionKind.CREATE) or action.needs_dep_update
 
 
+def _draft_pending(action: SyncAction) -> bool:
+    """True for a kept review gg left an unpublished draft on (-p publishes it)."""
+    return (action.kind == ActionKind.KEEP and not action.outside_range
+            and action.old_entry is not None and action.old_entry.draft)
+
+
 def _pub_label(action: SyncAction, publish: bool) -> str:
     """Pub column value for an action."""
-    if not _will_post(action):
+    if not (_will_post(action) or _draft_pending(action)):
         return "--"
     return "yes" if publish else "draft"
 
@@ -84,7 +90,8 @@ def format_series_plan(
 ) -> str:
     """Format a series plan: gone groups first, then each live series."""
     show_pub = any(
-        _will_post(a) for s in plan.series for a in s.actions if _visible(a)
+        _will_post(a) or _draft_pending(a)
+        for s in plan.series for a in s.actions if _visible(a)
     )
     actions = [a for s in plan.series for a in s.actions]
     actions += [a for g in plan.gone for a in g.actions]

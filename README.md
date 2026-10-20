@@ -79,7 +79,7 @@ operations support `-d`/`--dry` for dry-run.
 | `git gg rbt-sync --close` | Close all reviews as submitted and clear the DB |
 | `git gg rbt-sync -d -l` | Show reviews as full URLs (`--links`); see [Review links](#review-links) |
 | `git gg rbt-sync --md -s $` | Print the series as Markdown lists of review links, to paste into a chat or a mail (`-s` or a range picks the series; nothing is posted). Pipe it to the clipboard: `... \| xclip -sel clip` or `\| wl-copy` |
-| `git gg publish` | Publish drafts of every review request on the current branch |
+| `git gg publish` | Publish the drafts gg left on the branch's review requests (posted without `-p`); `--all` tries every review, e.g. for drafts made in the browser |
 | `git gg rbt-import` | Import an existing ReviewBoard chain into `reviews.db` |
 | `git gg db` | Inspect and manage `.gg/reviews.db` (list/clear/reinit) |
 
@@ -436,12 +436,17 @@ git gg rbt
 
 # (optional) eyeball things on RB, tweak via the web UI...
 
-# Publish every draft for this branch
+# Publish the drafts gg left on this branch
 git gg publish
 ```
 
-`gg rbt -u --publish` and `gg rbt-sync -p` also publish unchanged
-drafts (in addition to creating/updating reviews whose diff changed).
+`reviews.db` remembers which reviews gg posted without publishing, so
+`gg publish` and `gg rbt-sync -p` call `rbt publish` only for those: a
+review already published costs no ReviewBoard call (that matters when the
+server rate-limits). The plan's Pub column shows `draft` (or `yes` with
+`-p`) on a kept review with such a draft. A draft gg cannot know about
+(edited in the browser) needs `gg publish --all`, which tries every
+review of the branch; one with no draft is skipped quietly.
 
 ### Importing an existing ReviewBoard chain
 

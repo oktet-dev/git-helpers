@@ -325,11 +325,11 @@ class TestPlanPublishColumn:
     def test_publish_flag_shows_yes(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
     ) -> None:
-        """With -p -d, update/create rows show 'yes', keep rows show '--'."""
+        """With -p -d, update/create rows show 'yes', published keep rows '--'."""
         git_repo.create_branch("feature", "master")
         git_repo.commit("fix crash")
         git_repo.commit("add tests")
-        _post_series(git_repo)
+        assert git_repo.run_gg("rbt", "-p").returncode == 0
 
         # Amend last commit to trigger update
         (git_repo.work_dir / "extra").write_text("changed\n")
@@ -371,11 +371,11 @@ class TestPlanPublishColumn:
     def test_all_keep_no_pub_column(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
     ) -> None:
-        """When all actions are keep, Pub column is omitted."""
+        """When all actions are keep (published, no draft), Pub column is omitted."""
         git_repo.create_branch("feature", "master")
         git_repo.commit("fix crash")
         git_repo.commit("add tests")
-        _post_series(git_repo)
+        assert git_repo.run_gg("rbt", "-p").returncode == 0
 
         r = git_repo.run_gg("rbt-sync", "-d")
         assert r.returncode == 0
@@ -944,6 +944,75 @@ class TestPublishUnchangedOnSync:
         r = git_repo.run_gg("rbt-sync", "-p")
         assert "rbt publish r/1000 failed" in r.stderr
         assert "Error getting review request 1000" in r.stderr
+
+
+class TestDraftTracking:
+    """reviews.db remembers which reviews gg left an unpublished draft on."""
+
+    def _drafts(self, git_repo: GitRepo) -> list[bool]:
+        return [e.draft for e in review_store.load_reviews("feature", cwd=git_repo.work_dir)]
+
+    def _publishes(self, rbt_mock: RbtMock, since: int) -> list[str]:
+        return [c[1] for c in rbt_mock.calls()[since:] if c and c[0] == "publish"]
+
+    def test_posting_records_whether_a_draft_is_left(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        assert self._drafts(git_repo) == [True]
+        git_repo.commit("add tests")
+        assert git_repo.run_gg("rbt-sync", "-p").returncode == 0
+        # The kept draft was published, the new review posted published.
+        assert self._drafts(git_repo) == [False, False]
+
+    def test_publish_skips_kept_reviews_without_a_draft(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        assert git_repo.run_gg("rbt-sync", "-p").returncode == 0
+        calls = rbt_mock.call_count()
+        assert git_repo.run_gg("rbt-sync", "-p").returncode == 0
+        assert self._publishes(rbt_mock, calls) == []
+
+    def test_publish_once_then_nothing(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        git_repo.commit("add tests")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        ids = [e.review_id for e in review_store.load_reviews("feature", cwd=git_repo.work_dir)]
+        calls = rbt_mock.call_count()
+        assert git_repo.run_gg("rbt-sync", "-p").returncode == 0
+        assert self._publishes(rbt_mock, calls) == ids
+        calls = rbt_mock.call_count()
+        assert git_repo.run_gg("rbt-sync", "-p").returncode == 0
+        assert self._publishes(rbt_mock, calls) == []
+
+    def test_failed_publish_keeps_the_draft_mark(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        rbt_mock.queue_failure("ERROR: boom\n", command="publish")
+        git_repo.run_gg("rbt-sync", "-p")
+        assert self._drafts(git_repo) == [True]
+
+    def test_plan_shows_pending_drafts(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("fix crash")
+        assert git_repo.run_gg("rbt-sync").returncode == 0
+        out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
+        assert re.search(r"keep\s+draft\s+r/1000", out)
+        out = _plain(git_repo.run_gg("rbt-sync", "-d", "-p").stdout)
+        assert re.search(r"keep\s+yes\s+r/1000", out)
 
 
 class TestSyncRetry:
@@ -1590,7 +1659,7 @@ class TestFailedPost:
         [n1] = review_store.load_reviews("feature", cwd=git_repo.work_dir)
         assert n1.subject == "n1"
         out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
-        assert re.search(rf"\[1/1\]\s+keep\s+--\s+r/{n1.review_id}\s+n1", out)
+        assert re.search(rf"\[1/1\]\s+keep\s+draft\s+r/{n1.review_id}\s+n1", out)
         assert len(re.findall(r"\]\s+create", out)) == 2
 
     def test_interrupt_mid_run_saves_and_reraises(
@@ -1623,7 +1692,7 @@ class TestFailedPost:
         assert [(e.review_id, e.diff_hash) for e in saved] == [
             (a1.review_id, a1.diff_hash), (a2.review_id, "post-failed")]
         out = _plain(git_repo.run_gg("rbt-sync", "-d").stdout)
-        assert re.search(rf"\[1/2\]\s+keep\s+--\s+r/{a1.review_id}\s+a1", out)
+        assert re.search(rf"\[1/2\]\s+keep\s+draft\s+r/{a1.review_id}\s+a1", out)
         assert re.search(rf"\[2/2\]\s+update\s+\S+\s+r/{a2.review_id}\s+a2", out)
         assert re.search(r"\[1/1\]\s+create\s+\S+\s+--\s+n1", out)
 
@@ -1674,8 +1743,8 @@ class TestLinksOption:
         git_repo.commit("add tests")
         assert git_repo.run_gg("rbt-sync").returncode == 0
         out = git_repo.run_gg("rbt-sync", "-d", "--links").stdout
-        assert re.search(r"keep\s+https://rb\.example\.com/r/1000/\s+fix crash", out)
-        assert re.search(r"keep\s+https://rb\.example\.com/r/\d+/\s+add tests", out)
+        assert re.search(r"keep\s+draft\s+https://rb\.example\.com/r/1000/\s+fix crash", out)
+        assert re.search(r"keep\s+draft\s+https://rb\.example\.com/r/\d+/\s+add tests", out)
         assert "\x1b]8" not in out
 
     def test_plain_ids_when_piped(self, git_repo: GitRepo, rbt_mock: RbtMock) -> None:
@@ -1686,7 +1755,7 @@ class TestLinksOption:
         git_repo.commit("fix crash")
         assert git_repo.run_gg("rbt-sync").returncode == 0
         out = git_repo.run_gg("rbt-sync", "-d").stdout
-        assert re.search(r"keep\s+r/1000\s+fix crash", out)
+        assert re.search(r"keep\s+draft\s+r/1000\s+fix crash", out)
         assert "\x1b]8" not in out
 
 

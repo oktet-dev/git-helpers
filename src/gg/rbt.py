@@ -126,6 +126,7 @@ def run(args: argparse.Namespace) -> int:
                     review_id=result.review_id,
                     subject=review_store.strip_prefix(summary_text),
                     diff_hash=h,
+                    draft=not args.publish,
                 ))
 
         if not args.dry:
@@ -207,6 +208,7 @@ def run(args: argparse.Namespace) -> int:
                 review_id=result.review_id,
                 subject=review_store.strip_prefix(summary_text),
                 diff_hash=h,
+                draft=not args.publish,
             ))
 
     if not args.dry:

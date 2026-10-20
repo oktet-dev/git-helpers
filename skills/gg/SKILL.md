@@ -49,12 +49,12 @@ This skill says when to use what, and what needs the user's go.
 | `gg rbt-sync` | post / update the branch's series (drafts) |
 | `gg rbt-sync -s 3` / `-s $` / `-s 4:1-3` | act on series 3 / the last series / patches 1-3 of series 4 (`$` = last series or patch) |
 | `gg rbt-sync -s $:1-3` | post only the first 3 unposted commits as the next series |
-| `gg rbt-sync -p` | publish while posting (only when asked) |
+| `gg rbt-sync -p` | publish while posting, plus kept reviews gg left a draft on (only when asked) |
 | `gg rbt-sync -U alice,bob -G team` | reviewers and groups for new reviews |
 | `gg rbt-sync --md -s $` | Markdown list of review links to paste into chat or mail |
 | `gg rbt-sync -l` | full URLs instead of `r/N` |
 | `gg rbt-sync -i` / `--new` / `--close` / `--renumber` / `-f` | rarer; read `--help` and ask first |
-| `gg publish` | publish the drafts of every review on the branch |
+| `gg publish` | publish the drafts gg left on the branch's reviews (`--all`: try every review) |
 | `gg comments` | reviewer discussions with the code they point at |
 | `gg comments reply` | post replies and issue status changes |
 | `gg rbt-import FIRST_ID` | record an existing RB chain in `reviews.db` |

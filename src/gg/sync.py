@@ -100,11 +100,12 @@ def _old_series_sizes(plan: SeriesPlan) -> Counter[tuple[str, int]]:
 
 def _entry(
     branch: str, review_id: str, subject: str, diff_hash: str, series: int,
+    *, draft: bool = False,
 ) -> review_store.ReviewEntry:
     """A record entry; its position is set when the record is saved."""
     return review_store.ReviewEntry(
         branch=branch, position=0, review_id=review_id, subject=subject,
-        diff_hash=diff_hash, series=series,
+        diff_hash=diff_hash, series=series, draft=draft,
     )
 
 
@@ -163,7 +164,7 @@ def _live_rows(plan: SeriesPlan, *, branch_name: str, renumber: bool) -> list[_R
                 assert old is not None
                 post = False
                 held = _entry(branch_name, old.review_id, old.subject, old.diff_hash,
-                              series.number)
+                              series.number, draft=old.draft)
             elif (action.kind == ActionKind.KEEP
                     and not action.needs_dep_update
                     and (not renumber
@@ -173,11 +174,13 @@ def _live_rows(plan: SeriesPlan, *, branch_name: str, renumber: bool) -> list[_R
                 assert old is not None
                 post = False
                 held = _entry(branch_name, old.review_id, subject,
-                              action.new_commit.diff_hash, series.number)
+                              action.new_commit.diff_hash, series.number,
+                              draft=old.draft)
             else:
                 post = True
                 held = None if old is None else _entry(
-                    branch_name, old.review_id, subject, _POST_FAILED, series.number)
+                    branch_name, old.review_id, subject, _POST_FAILED, series.number,
+                    draft=old.draft)
             rows.append(_Row(action, num_str, series.number, post, held))
     return rows
 
@@ -212,11 +215,12 @@ def _execute(
 
         if not row.post:
             # Nothing to post. If --publish was requested, still publish
-            # the (possibly draft) review request, unless it is outside
-            # the range.
-            assert old is not None
-            if publish and not action.outside_range:
-                publish_one(old.review_id, verbose=verbose, cwd=cwd)
+            # the draft gg left on it earlier, unless it is outside the
+            # range.
+            assert old is not None and row.held is not None
+            if publish and not action.outside_range and old.draft:
+                if publish_one(old.review_id, verbose=verbose, cwd=cwd) == 0:
+                    record[i] = replace(row.held, draft=False)
             prev_review_id = old.review_id
             continue
 
@@ -268,13 +272,15 @@ def _execute(
             if rid and old is None:
                 # rbt failed after creating the review: it exists on
                 # ReviewBoard, so keep it, due a re-post.
-                record[i] = _entry(branch_name, rid, subject, _POST_FAILED, row.series)
+                record[i] = _entry(branch_name, rid, subject, _POST_FAILED, row.series,
+                                   draft=True)
             # Stop here: posting on would chain later patches to the
             # wrong review.
             return True
 
         record[i] = _entry(
             branch_name, rid, subject, action.new_commit.diff_hash, row.series,
+            draft=not publish,
         )
         prev_review_id = rid
 
@@ -297,6 +303,7 @@ def _save(
                 entries.append(_entry(
                     branch_name, a.old_entry.review_id, a.old_entry.subject,
                     a.old_entry.diff_hash, a.old_entry.series,
+                    draft=a.old_entry.draft,
                 ))
     entries = [replace(e, position=n) for n, e in enumerate(entries, 1)]
 
