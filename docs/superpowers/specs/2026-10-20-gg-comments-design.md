@@ -1,6 +1,6 @@
 # `gg comments`: work through ReviewBoard comments from a session
 
-**Status:** draft
+**Status:** approved
 **Date:** 2026-10-20
 
 ## Why
