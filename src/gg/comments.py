@@ -7,7 +7,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from gg import git, rb_client
+from gg import git
 from gg.branch_plan import BranchPlanner, branch_planner
 from gg.comments_format import Place, RequestView, format_totals, format_view, shown
 from gg.discussions import build_discussions, code_excerpt, ship_its
@@ -152,7 +152,15 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
 
 
 def connect(cwd: Path) -> RBApi:
-    """The ReviewBoard client for `cwd`; tests replace this name."""
+    """The ReviewBoard client for `cwd`; tests replace this name.
+
+    RBTools is imported here, not with this module, so that the other gg
+    commands run in an install that lacks it.
+    """
+    try:
+        from gg import rb_client
+    except ImportError as e:
+        raise RBError("gg comments needs RBTools: reinstall gg with ./install.sh --gg") from e
     return rb_client.connect(cwd=cwd)
 
 

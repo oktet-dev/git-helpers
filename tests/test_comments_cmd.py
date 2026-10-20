@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import importlib
+import io
+import sys
+
 import pytest
 
 from gg import cli, comments, review_store
@@ -120,6 +124,37 @@ def test_code_not_available_when_rows_fail(repo: GitRepo, fake: FakeRB,
     del fake._rows[5]
     assert cli.main(["comments", "19954"]) == 0
     assert "(rows 3-3): code not available" in capsys.readouterr().out
+
+
+NO_RBTOOLS = "[gg] gg comments needs RBTools: reinstall gg with ./install.sh --gg\n"
+
+
+@pytest.fixture
+def no_rbtools(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RBTools cannot be imported, and gg's modules that use it are imported afresh."""
+    import gg
+    for name in ["rbtools", *[m for m in sys.modules if m.startswith("rbtools.")]]:
+        monkeypatch.setitem(sys.modules, name, None)
+    for name in ("rb_client", "comments", "cli"):
+        monkeypatch.delitem(sys.modules, f"gg.{name}", raising=False)
+        monkeypatch.delattr(gg, name, raising=False)
+
+
+def test_without_rbtools_other_commands_work(repo: GitRepo, no_rbtools: None,
+                                             capsys: pytest.CaptureFixture[str]) -> None:
+    fresh_cli = importlib.import_module("gg.cli")
+    assert fresh_cli.main(["db", "--all"]) == 0
+
+
+def test_without_rbtools_comments_says_how_to_fix(repo: GitRepo, no_rbtools: None,
+                                                  monkeypatch: pytest.MonkeyPatch,
+                                                  capsys: pytest.CaptureFixture[str]) -> None:
+    fresh_cli = importlib.import_module("gg.cli")
+    assert fresh_cli.main(["comments", "19954"]) == 1
+    assert capsys.readouterr().err == NO_RBTOOLS
+    monkeypatch.setattr("sys.stdin", io.StringIO("=== r/19954 #37442 fixed\n"))
+    assert fresh_cli.main(["comments", "reply"]) == 1
+    assert capsys.readouterr().err == NO_RBTOOLS
 
 
 def test_help_lists_forms(capsys: pytest.CaptureFixture[str]) -> None:
