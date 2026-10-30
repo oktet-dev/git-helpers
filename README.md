@@ -79,6 +79,7 @@ operations support `-d`/`--dry` for dry-run.
 | `git gg rbt-sync --close` | Close all reviews as submitted and clear the DB |
 | `git gg rbt-sync -d -l` | Show reviews as full URLs (`--links`); see [Review links](#review-links) |
 | `git gg rbt-sync --md -s $` | Print the series as Markdown lists of review links, to paste into a chat or a mail (`-s` or a range picks the series; nothing is posted). Pipe it to the clipboard: `... \| xclip -sel clip` or `\| wl-copy` |
+| `git gg status` | Per patch, how many reviewers gave a Ship It and how many issues are still open, laid out as `rbt-sync -d`; `-s` as in `rbt-sync`, or given ids; `-l` for full URLs. Always asks ReviewBoard (`rbt-sync -d` never does) |
 | `git gg publish` | Publish the drafts gg left on the branch's review requests (posted without `-p`); `--all` tries every review, e.g. for drafts made in the browser |
 | `git gg rbt-import` | Import an existing ReviewBoard chain into `reviews.db` |
 | `git gg db` | Inspect and manage `.gg/reviews.db` (list/clear/reinit) |
@@ -86,7 +87,7 @@ operations support `-d`/`--dry` for dry-run.
 #### Review links
 
 On a terminal, every `r/N` that `gg` prints (`rbt-sync`, `db`, `publish`,
-`rbt-import`, `comments`) is a hyperlink (OSC 8) to the review: Ctrl+click opens it.
+`rbt-import`, `status`, `comments`) is a hyperlink (OSC 8) to the review: Ctrl+click opens it.
 The server comes from `REVIEWBOARD_URL` in `.reviewboardrc`, found the way
 `rbt` finds it, or from `git config reviewboard.url`. Piped output stays
 plain `r/N`. Inside tmux, let the links through to the terminal with this
@@ -96,13 +97,34 @@ line in `~/.tmux.conf`:
 set -as terminal-features ",xterm*:hyperlinks"
 ```
 
-Where hyperlinks don't work, `gg rbt-sync -l` (`--links`) prints the full
-URL instead of `r/N`; terminals make a plain URL clickable on their own.
+Where hyperlinks don't work, `gg rbt-sync -l` and `gg status -l` (`--links`)
+print the full URL instead of `r/N`; terminals make a plain URL clickable on their own.
 
 Shortcut aliases:
 
 - `git rbt ...` -> `git gg rbt-sync ...` (the most common command)
 - `git gorbt ...` -> `git gg rbt ...` (legacy)
+
+#### Review status
+
+`gg status` shows where each patch of the branch stands with its
+reviewers: the number of reviewers who gave a Ship It and the number of
+issues still open (open, or a fix or drop the reviewer has yet to verify).
+The layout is that of `rbt-sync -d`, with `-s` to narrow it the same way,
+or review ids. It needs RBTools like `gg comments` (see below).
+
+```
+$ git gg status
+#          Ship It  Issues  Review     Subject
+----------------------------------------------
+Series 1: 2 patches
+[1/2]      2        0       r/19954    net: add the thing
+[2/2]      1        2       r/19955    net: use the thing
+
+Series 2: 2 patches, depends on r/19955
+[1/2]      0        1       r/19960    tools: wire it up
+[2/2]      --       --      --         tools: docs
+```
 
 #### Review comments
 
@@ -199,7 +221,7 @@ same `.reviewboardrc` as `rbt`, and logs in with its `API_TOKEN` or
 `rbt`'s proxy settings (`ENABLE_PROXY`, `PROXY_AUTHORIZATION`) and
 external cookies (`EXT_AUTH_COOKIES`) are not used. RBTools became a
 dependency of gg with these commands: after updating git-helpers,
-reinstall gg once with `./install.sh --gg` (until then `gg comments`
+reinstall gg once with `./install.sh --gg` (until then `gg comments` and `gg status`
 says so; the other commands keep working).
 
 ### Pull requests (bash)

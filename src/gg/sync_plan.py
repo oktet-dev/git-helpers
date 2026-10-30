@@ -51,7 +51,8 @@ def _patches(n: int) -> str:
     return f"{n} patch" if n == 1 else f"{n} patches"
 
 
-def _series_header(series: Series, links: Links) -> str:
+def series_header(series: Series, links: Links) -> str:
+    """The section title of a live series, as `rbt-sync -d` prints it."""
     text = f"Series {series.number}: {_patches(len(series.actions))}"
     if series.was is not None:
         text += f" (was series {series.was})"
@@ -73,7 +74,8 @@ def _gone_header(group: GoneGroup, upstream: str) -> str:
     return f"{text}, gone from the branch"
 
 
-def _visible(action: SyncAction) -> bool:
+def visible(action: SyncAction) -> bool:
+    """Whether a plan line is shown: in range, or a dependency kept outside it."""
     return not action.outside_range or action.kind == ActionKind.KEEP_DEP
 
 
@@ -91,7 +93,7 @@ def format_series_plan(
     """Format a series plan: gone groups first, then each live series."""
     show_pub = any(
         _will_post(a) or _draft_pending(a)
-        for s in plan.series for a in s.actions if _visible(a)
+        for s in plan.series for a in s.actions if visible(a)
     )
     actions = [a for s in plan.series for a in s.actions]
     actions += [a for g in plan.gone for a in g.actions]
@@ -139,9 +141,9 @@ def format_series_plan(
             lines.append(row("--", action, review, subject))
 
     for series in plan.series:
-        section(_series_header(series, links))
+        section(series_header(series, links))
         for action, num_str in number_series(series, renumber=renumber):
-            if not _visible(action):
+            if not visible(action):
                 continue
             review = action.old_entry.review_id if action.old_entry else None
             subject = action.new_commit.subject if action.new_commit else ""

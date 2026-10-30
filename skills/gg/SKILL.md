@@ -1,6 +1,6 @@
 ---
 name: gg
-description: Use when working with ReviewBoard (RB, review requests, r/NNNN) or the gg / git-helpers CLI - posting or updating a branch's patch series (gg rbt-sync, git rbt), publishing drafts, sharing review links, reading or answering reviewer comments (gg comments), or inspecting .gg/reviews.db.
+description: Use when working with ReviewBoard (RB, review requests, r/NNNN) or the gg / git-helpers CLI - posting or updating a branch's patch series (gg rbt-sync, git rbt), publishing drafts, sharing review links, checking Ship Its and open issues (gg status), reading or answering reviewer comments (gg comments), or inspecting .gg/reviews.db.
 ---
 
 # gg: ReviewBoard from git
@@ -19,7 +19,7 @@ This skill says when to use what, and what needs the user's go.
   action**: no posting, publishing, closing, replying or issue status
   change. Ask, then run exactly what was agreed.
 - Read-only is always fine: `gg rbt-sync -d`, `gg rbt-sync --md`,
-  `gg comments`, `gg comments reply -d`, `gg db`, `rbt api-get`.
+  `gg status`, `gg comments`, `gg comments reply -d`, `gg db`, `rbt api-get`.
 - Before any real `gg rbt-sync`, run it with `-d` and show the plan. Rows
   `discard`, `submit` and `forget` close or drop reviews: point them out.
 - Never print or copy the `API_TOKEN` from `.reviewboardrc`.
@@ -55,6 +55,7 @@ This skill says when to use what, and what needs the user's go.
 | `gg rbt-sync -l` | full URLs instead of `r/N` |
 | `gg rbt-sync -i` / `--new` / `--close` / `--renumber` / `-f` | rarer; read `--help` and ask first |
 | `gg publish` | publish the drafts gg left on the branch's reviews (`--all`: try every review) |
+| `gg status` | per patch, Ship It count and open-issue count, laid out as `rbt-sync -d` (`-s`, ids, `-l` as there); asks RB |
 | `gg comments` | reviewer discussions with the code they point at |
 | `gg comments reply` | post replies and issue status changes |
 | `gg rbt-import FIRST_ID` | record an existing RB chain in `reviews.db` |
