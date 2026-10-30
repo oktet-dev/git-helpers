@@ -69,7 +69,11 @@ This skill says when to use what, and what needs the user's go.
    asked to publish).
 3. Report the review ids; offer `--md` if they want to share the links.
 
-Notes: a failed post stops the run and the next run retries it. `rbt
+Notes: a failed post stops the run and the next run retries it. If gg
+waits with "ReviewBoard has no FILE at revision SHA", the branch is not
+pushed to the repository ReviewBoard reads (the remote may differ from the
+branch's upstream): tell the user which file and revision, and that the push
+is theirs to run. `rbt
 publish` saying "it may already be published ... API Error 100" just means
 there was no draft. Fix a branch's records with `gg db` / `--new` only with
 the user.

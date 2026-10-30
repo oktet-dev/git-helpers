@@ -8,12 +8,32 @@ import subprocess
 from gg.rbt_retry import (
     RetryClass,
     classify,
+    missing_base_detail,
     rate_limit_schedule,
     missing_base_schedule,
     sleep_with_status,
     _fmt_mmss,
     run_with_retry,
 )
+
+
+_RBT_207 = (
+    "Error validating diff\n\n"
+    "net-drv-ts/lib/net_drv_dcb.c (revision 5cfc97b240979d20b07266dcf0f02edef9"
+    "cb4cb4): The file was not found in the repository. (API Error 207: "
+    "Repository File Not Found)\n"
+)
+
+
+class TestMissingBaseDetail:
+    def test_file_and_revision_from_rbt_output(self) -> None:
+        assert missing_base_detail(_RBT_207) == (
+            "net-drv-ts/lib/net_drv_dcb.c",
+            "5cfc97b240979d20b07266dcf0f02edef9cb4cb4",
+        )
+
+    def test_none_without_the_rbt_prefix(self) -> None:
+        assert missing_base_detail("API Code: code: 207\n") is None
 
 
 class TestClassify:
@@ -226,6 +246,36 @@ class TestRunWithRetry:
         assert r.returncode == 1
         assert len(runner.calls) == 4
         assert sleep.calls == [10, 30, 90]
+
+    def test_missing_base_names_the_file_and_revision(self, monkeypatch) -> None:
+        monkeypatch.setenv("GG_RBT_MISSING_BASE_RETRIES", "1")
+        monkeypatch.setenv("GG_RBT_MISSING_BASE_DELAY", "300")
+        runner = _ScriptedRunner([_proc(1, stderr=_RBT_207) for _ in range(2)])
+        sleep = _FakeSleep()
+        status = io.StringIO()
+        run_with_retry(
+            ["rbt", "post"], runner=runner, sleep=sleep, status_stream=status,
+        )
+        assert status.getvalue() == (
+            "[gg] ReviewBoard has no net-drv-ts/lib/net_drv_dcb.c at revision "
+            "5cfc97b2 (is the branch pushed to the repository it reads?); "
+            "sleeping 300s before retry 2/2\n"
+        )
+
+    def test_missing_base_without_detail_keeps_the_generic_reason(
+        self, monkeypatch,
+    ) -> None:
+        monkeypatch.setenv("GG_RBT_MISSING_BASE_RETRIES", "1")
+        monkeypatch.setenv("GG_RBT_MISSING_BASE_DELAY", "300")
+        runner = _ScriptedRunner([_proc(1, stderr="API Code: code: 207\n")] * 2)
+        status = io.StringIO()
+        run_with_retry(
+            ["rbt", "post"], runner=runner, sleep=_FakeSleep(), status_stream=status,
+        )
+        assert status.getvalue() == (
+            "[gg] base commit not yet in the repository ReviewBoard reads; "
+            "sleeping 300s before retry 2/2\n"
+        )
 
     def test_recovery_on_third_attempt(self, monkeypatch) -> None:
         monkeypatch.setenv("GG_RBT_RATE_LIMIT_INITIAL_DELAY", "0")

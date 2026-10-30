@@ -1617,6 +1617,18 @@ class TestFailedPost:
         assert "Series 2: 2 patches, new" in out
         assert len(re.findall(r"\]\s+create", out)) == 2
 
+    def test_each_post_is_announced_with_its_commit(
+        self, git_repo: GitRepo, rbt_mock: RbtMock,
+    ) -> None:
+        git_repo.create_branch("feature", "master")
+        git_repo.commit("s1")
+        git_repo.commit("s2")
+        sha = git_repo.git("rev-parse", "--short", "HEAD").stdout.strip()
+        r = git_repo.run_gg("rbt-sync", "-U", "alice")
+        assert r.returncode == 0
+        assert "[gg] posting [1/2] s1 (" in r.stderr
+        assert f"[gg] posting [2/2] s2 ({sha})\n" in r.stderr
+
     def test_failed_create_that_posted_is_recorded(
         self, git_repo: GitRepo, rbt_mock: RbtMock,
     ) -> None:

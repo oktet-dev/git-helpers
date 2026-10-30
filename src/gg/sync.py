@@ -229,6 +229,12 @@ def _execute(
         else:
             num_prefix = f"{row.num_str}: "
 
+        print(
+            f"[gg] posting {row.num_str} "
+            f"{review_store.strip_prefix(action.new_commit.subject)} "
+            f"({action.new_commit.rev[:7]})",
+            file=sys.stderr,
+        )
         if action.kind == ActionKind.CREATE:
             if reviewers is not None or groups is not None:
                 create_reviewers = reviewers or []

@@ -225,10 +225,16 @@ Set `GG_GIT_HELPERS_FORKNAME` to configure the fork remote name.
 | `GG_RBT_RATE_LIMIT_RETRIES` | `3` | Retries on RB API 114 rate-limit |
 | `GG_RBT_RATE_LIMIT_INITIAL_DELAY` | `10` | Seconds before first rate-limit retry |
 | `GG_RBT_RATE_LIMIT_FACTOR` | `3` | Multiplier between rate-limit retries |
-| `GG_RBT_MISSING_BASE_RETRIES` | `3` | Retries on RB API 207 (base commit missing from mirror) |
+| `GG_RBT_MISSING_BASE_RETRIES` | `3` | Retries on RB API 207 (a file at the base commit is not in the repository ReviewBoard reads) |
 | `GG_RBT_MISSING_BASE_DELAY` | `300` | Seconds between missing-base retries |
 
 Set any `RETRIES` var to `0` to disable retries for that class.
+
+ReviewBoard fetches the original files of a diff by blob id from the
+repository configured on the server, which may be a different remote from the
+branch's upstream. A 207 names the file and blob it could not find; the usual
+cause is a branch that was rebased but not pushed to that repository since.
+Push it there, then run `gg rbt-sync` again.
 
 ### Utility aliases (gitconfig)
 

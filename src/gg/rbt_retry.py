@@ -32,6 +32,12 @@ _MISSING_BASE_RE = re.compile(
     r"API Code:\s*code:\s*207\b|not found in the repository",
     re.IGNORECASE,
 )
+# rbt post prefixes a 207 with the file ReviewBoard could not fetch:
+#   "<path> (revision <blob sha>): The file was not found in the repository."
+_MISSING_FILE_RE = re.compile(
+    r"^(?P<path>\S.*?) \(revision (?P<rev>[0-9a-fA-F]+)\): .*not found in the repository",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def classify(returncode: int, output: str) -> RetryClass:
@@ -43,6 +49,14 @@ def classify(returncode: int, output: str) -> RetryClass:
     if _MISSING_BASE_RE.search(output):
         return RetryClass.MISSING_BASE
     return RetryClass.FATAL
+
+
+def missing_base_detail(output: str) -> tuple[str, str] | None:
+    """Return (path, blob revision) ReviewBoard could not find, from rbt's output."""
+    m = _MISSING_FILE_RE.search(output)
+    if not m:
+        return None
+    return m.group("path"), m.group("rev")
 
 
 def _int_env(name: str, default: int) -> int:
@@ -123,8 +137,21 @@ def sleep_with_status(
 
 _REASON = {
     RetryClass.RATE_LIMIT: "rate-limited",
-    RetryClass.MISSING_BASE: "base commit not yet in RB mirror",
+    RetryClass.MISSING_BASE: "base commit not yet in the repository ReviewBoard reads",
 }
+
+
+def _reason(cls: RetryClass, output: str) -> str:
+    """The status-line reason for a transient failure, with rbt's detail."""
+    if cls is RetryClass.MISSING_BASE:
+        detail = missing_base_detail(output)
+        if detail:
+            path, rev = detail
+            return (
+                f"ReviewBoard has no {path} at revision {rev[:8]} "
+                "(is the branch pushed to the repository it reads?)"
+            )
+    return _REASON[cls]
 
 
 def _pick_schedule(cls: RetryClass) -> list[int]:
@@ -157,7 +184,8 @@ def run_with_retry(
         r = runner(
             cmd, cwd=cwd, input=input, capture_output=True, text=True,
         )
-        cls = classify(r.returncode, (r.stdout or "") + (r.stderr or ""))
+        output = (r.stdout or "") + (r.stderr or "")
+        cls = classify(r.returncode, output)
         if cls in (RetryClass.OK, RetryClass.FATAL):
             return r
 
@@ -172,7 +200,7 @@ def run_with_retry(
         attempt = total_attempts - len(schedule)
         sleep_with_status(
             delay,
-            reason=_REASON[cls],
+            reason=_reason(cls, output),
             attempt=attempt,
             total=total_attempts,
             stream=status_stream,
